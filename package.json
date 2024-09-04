@@ -1,0 +1,23 @@
+{
+  "name": "sheetswatchdog",
+  "version": "0.0.1",
+  "description": "Seamlessly monitor and manage server uptime using Google Sheets and AWS Lambda for real-time performance insights.",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+ssh://git@github.com/emerauda/sheetswatchdog.git"
+  },
+  "author": "Aoi Emerauda",
+  "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/emerauda/sheetswatchdog/issues"
+  },
+  "homepage": "https://github.com/emerauda/sheetswatchdog#readme",
+  "dependencies": {
+    "axios": "^1.7.7",
+    "googleapis": "^144.0.0"
+  }
+}
