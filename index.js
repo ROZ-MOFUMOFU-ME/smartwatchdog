@@ -5,7 +5,7 @@ const https = require('https');
 const { S3Client, GetObjectCommand, PutObjectCommand } = require('@aws-sdk/client-s3');
 
 // AWS S3クライアントを初期化
-const s3Client = new S3Client({ region: process.env.AWS_REGION }); // AWSのリージョンを環境変数から取得
+const s3Client = new S3Client({ region: process.env.AWS_REGION }); // AWSのリージョンを自動取得
 const SLACK_WEBHOOK_URL = process.env.SLACK_WEBHOOK_URL; // Slack Webhook URLを環境変数から取得
 const bucketName = process.env.S3_BUCKET_NAME; // S3バケット名を環境変数から取得
 const objectKey = 'server_status.json'; // S3に保存するファイル名
