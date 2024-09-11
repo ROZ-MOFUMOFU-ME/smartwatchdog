@@ -30,7 +30,7 @@ AWS Lambda関数で以下の環境変数を設定してください:
 - `GOOGLE_CLIENT_EMAIL`: Googleサービスアカウントのメールアドレス
 - `GOOGLE_PRIVATE_KEY`: Googleサービスアカウントのプライベートキー
 - `SPREADSHEET_ID`: GoogleスプレッドシートのID
-- `RANGE`: チェックするシートの範囲（例: `シート1!A2:D`）
+- `RANGE`: チェックするシートの範囲（例: `シート1!A2:D` もしくは `A2:D` - 全てのシートを対象）
 - `S3_BUCKET_NAME`: ステータスを保存するS3バケット名
 - `SLACK_WEBHOOK_URL`: SlackのWebhook URL
 
