@@ -83,9 +83,9 @@ const readStatusesFromS3 = async (fileName) => {
 const streamToString = (stream) => {
     return new Promise((resolve, reject) => {
         const chunks = [];
-        stream.on('data', (chunk) => chunks.push(chunk));
-        stream.on('end', () => resolve(Buffer.concat(chunks).toString('utf8')));
-        stream.on('error', reject);
+        stream.on('data', (chunk) => chunks.push(chunk)); // データを受信
+        stream.on('end', () => resolve(Buffer.concat(chunks).toString('utf8'))); // 全てのデータが揃ったら文字列に変換
+        stream.on('error', reject); // エラーが発生したら拒否
     });
 };
 
@@ -93,20 +93,20 @@ const streamToString = (stream) => {
 const generateCurrentStatuses = async (rows) => {
     const currentStatuses = {};
     for (let i = 0; i < rows.length; i++) {
-        const serverName = rows[i][0];
-        const serverUrl = rows[i][1];
-        const status = rows[i][2];
-        const lastUpdate = rows[i][3];
+        const serverName = rows[i][0]; // A列: サーバー名
+        const serverUrl = rows[i][1]; // B列: サーバーURL
+        const status = rows[i][2]; // C列: ステータス
+        const lastUpdate = rows[i][3];  // D列: 最終更新日時
 
         if (serverName || serverUrl) {
-            const key = serverName || serverUrl;
+            const key = serverName || serverUrl; // A列が空ならB列をキーに使用
             currentStatuses[key] = {
                 status,
                 lastUpdate,
             };
         }
     }
-    return currentStatuses;
+    return currentStatuses; // ステータスデータを返す
 };
 
 // サーバーステータスのチェックとSlack通知を行う関数
@@ -266,7 +266,7 @@ const getCurrentJST = () => {
 // スプレッドシートの更新とセルの色設定を同時に行う関数
 async function updateSheet(sheetId, range, results) {
     const colorMap = {
-        'red': { red: 0.956, green: 0.8, blue: 0.8 },
+        'red': { red: 0.956, green: 0.8, blue: 0.8 }, // R244 G204 B204
         'white': { red: 1, green: 1, blue: 1 }
     };
 
