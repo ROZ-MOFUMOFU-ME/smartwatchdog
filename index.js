@@ -21,10 +21,37 @@ const getAuthClient = async () => {
     return await auth.getClient(); // 認証クライアントを返す
 };
 
-// RANGEからシート名を抽出する関数
-const extractSheetNameFromRange = (range) => {
-    const match = range.match(/^(.*?)!/);
-    return match ? match[1] : null; // 「シート名!」部分を取得
+const processSheets = async (sheetId, range) => {
+    const allSheetNames = await getAllSheetNames(sheetId); // 全シート名を取得
+    const targetRange = range.includes('!') ? range : range; // シート名が指定されていない場合、全シートに対して処理する
+
+    for (const sheetName of allSheetNames) {
+        const fullRange = `${sheetName}!${targetRange}`;
+        const rows = await getSheetData(sheetId, fullRange);
+
+        if (!rows || !rows.length) {
+            console.log(`No data found in sheet: ${sheetName}`);
+            continue;
+        }
+
+        const fileName = `${objectKeyPrefix}_${sheetName}.json`;
+        let previousStatuses = await readStatusesFromS3(fileName);
+
+        const checks = rows.map((row, index) => checkServerStatus(row, index, sheetId, sheetName, previousStatuses));
+        const results = await Promise.allSettled(checks);
+
+        const currentStatuses = await generateCurrentStatuses(rows);
+        await writeStatusesToS3(currentStatuses, fileName);
+        await updateSheet(sheetId, fullRange, results);
+    }
+};
+
+// Google Sheetsの全シート名を取得する関数
+const getAllSheetNames = async (sheetId) => {
+    const response = await sheets.spreadsheets.get({
+        spreadsheetId: sheetId,
+    });
+    return response.data.sheets.map(sheet => sheet.properties.title); // すべてのシート名を取得
 };
 
 // Google SheetsからシートIDを取得する関数
@@ -93,10 +120,10 @@ const streamToString = (stream) => {
 const generateCurrentStatuses = async (rows) => {
     const currentStatuses = {};
     for (let i = 0; i < rows.length; i++) {
-        const serverName = rows[i][0]; // A列: サーバー名
+        const serverName = rows[i][0]; // A列: サーバー名 
         const serverUrl = rows[i][1]; // B列: サーバーURL
         const status = rows[i][2]; // C列: ステータス
-        const lastUpdate = rows[i][3];  // D列: 最終更新日時
+        const lastUpdate = rows[i][3]; // D列: 最終更新日時
 
         if (serverName || serverUrl) {
             const key = serverName || serverUrl; // A列が空ならB列をキーに使用
@@ -161,13 +188,13 @@ const checkServerStatus = async (row, index, sheetId, sheetName, previousStatuse
             }, 'error', sheetName); // エラー時の通知
         }
 
-        previousStatuses[serverName] = { status: customStatus, lastUpdate: getCurrentJST() };
-        return { index, serverName, serverUrl, status: customStatus, color: 'red', lastUpdate: getCurrentJST() };
+        previousStatuses[serverName] = { status: customStatus, lastUpdate: getCurrentJST() }; // ステータスを更新
+        return { index, serverName, serverUrl, status: customStatus, color: 'red', lastUpdate: getCurrentJST() }; // エラー時のステータス
     }
 };
 
 // Slack Block Kit形式で通知を送信する関数
-const sendSlackNotification = async (statusData, type) => {
+const sendSlackNotification = async (statusData, type, sheetName) => {
     const headerText = type === 'error'
         ? ":rotating_light: Server health check failure :rotating_light:"
         : ":white_check_mark: Server is now alive :white_check_mark:";
@@ -178,7 +205,7 @@ const sendSlackNotification = async (statusData, type) => {
                 type: "header",
                 text: {
                     type: "plain_text",
-                    text: headerText, // エラーか復旧かによってヘッダーを変更
+                    text: `${headerText} - (${sheetName})`, // シート名を通知内容に含める
                     emoji: true
                 }
             },
@@ -200,11 +227,11 @@ const sendSlackNotification = async (statusData, type) => {
                 fields: [
                     {
                         type: "mrkdwn",
-                        text: `*Status:*\n:${type === 'error' ? 'red' : 'large_green'}_circle: ${statusData.status}` // サーバーステータスに色付きアイコン
+                        text: `*Status:*\n:${type === 'error' ? 'red_circle' : 'large_green_circle'}: ${statusData.status}`
                     },
                     {
                         type: "mrkdwn",
-                        text: `*Last Updated:*\n${statusData.lastUpdate}` // 最終更新日時
+                        text: `*Last Updated:*\n${statusData.lastUpdate}`
                     }
                 ]
             },
@@ -232,11 +259,11 @@ const sendSlackNotification = async (statusData, type) => {
     // Slackにメッセージを送信するためのオプション設定
     const options = {
         hostname: 'hooks.slack.com',
-        path: '/services/' + SLACK_WEBHOOK_URL.split('https://hooks.slack.com/services/')[1],
+        path: `/services/${SLACK_WEBHOOK_URL.split('https://hooks.slack.com/services/')[1]}`,
         method: 'POST',
         headers: {
             'Content-Type': 'application/json',
-            'Content-Length': JSON.stringify(payload).length,
+            'Content-Length': Buffer.byteLength(JSON.stringify(payload)),
         },
     };
 
@@ -266,8 +293,8 @@ const getCurrentJST = () => {
 // スプレッドシートの更新とセルの色設定を同時に行う関数
 async function updateSheet(sheetId, range, results) {
     const colorMap = {
-        'red': { red: 0.956, green: 0.8, blue: 0.8 }, // R244 G204 B204
-        'white': { red: 1, green: 1, blue: 1 }
+        'red': { red: 0.956, green: 0.8, blue: 0.8 }, // エラーカラー
+        'white': { red: 1, green: 1, blue: 1 }        // 正常カラー
     };
 
     const [sheetName, cellRange] = range.split('!');
@@ -275,7 +302,11 @@ async function updateSheet(sheetId, range, results) {
     const startColumn = cellRange.match(/[A-Z]+/g)[0];
     const startRow = parseInt(cellRange.match(/\d+/g)[0], 10);
     const statusColumn = String.fromCharCode(startColumn.charCodeAt(0) + 2); // C列
-    const lastUpdateColumn = String.fromCharCode(startColumn.charCodeAt(0) + 3);  // D列
+    const lastUpdateColumn = String.fromCharCode(startColumn.charCodeAt(0) + 3); // D列
+
+    const updateRange = `${sheetName}!${statusColumn}${startRow}:${lastUpdateColumn}${startRow + results.length - 1}`;
+    
+    console.log(`Updating sheet with range: ${updateRange}`); // デバッグ: 更新範囲を出力
 
     const requests = results.map(result => {
         const { index, status, lastUpdate, color } = result.value || result.reason;
@@ -283,7 +314,7 @@ async function updateSheet(sheetId, range, results) {
         return {
             updateCells: {
                 range: {
-                    sheetId: sheetIdInt, // シートID
+                    sheetId: sheetIdInt, // 正しいシートIDを使用
                     startRowIndex: index + startRow - 1,
                     endRowIndex: index + startRow,
                     startColumnIndex: statusColumn.charCodeAt(0) - 'A'.charCodeAt(0),
@@ -309,9 +340,9 @@ async function updateSheet(sheetId, range, results) {
 
     try {
         const response = await sheets.spreadsheets.batchUpdate(request);
-        console.log('Batch update response:', response.data);
+        console.log('Batch update response:', response.data); // デバッグ: 更新結果を出力
     } catch (error) {
-        console.error('Error in updateSheet:', error);
+        console.error('Error in updateSheet:', error); // エラーログを出力
         throw error;
     }
 }
@@ -325,40 +356,20 @@ exports.handler = async (event) => {
 
         const sheetId = process.env.SPREADSHEET_ID;
         const range = process.env.RANGE;
-        
-        // RANGEからシート名を抽出
-        const sheetName = extractSheetNameFromRange(range);
-        if (!sheetName) {
-            throw new Error("Invalid RANGE format. Sheet name not found.");
-        }
 
-        const rows = await getSheetData(sheetId, range);
-        if (!rows || !rows.length) {
-            console.log(`No data found in sheet: ${sheetName}`);
-            return response(200, 'No data found.');
-        }
+        // シート名が指定されていない場合、すべてのシートを処理
+        await processSheets(sheetId, range);
 
-        const fileName = `${objectKeyPrefix}_${sheetName}.json`;
-        let previousStatuses = await readStatusesFromS3(fileName);
-
-        const checks = rows.map((row, index) => checkServerStatus(row, index, sheetId, sheetName, previousStatuses));
-        const results = await Promise.allSettled(checks);
-
-        await updateSheet(sheetId, range, results); // 正しいシート範囲での更新
-
-        const currentStatuses = await generateCurrentStatuses(rows);
-        await writeStatusesToS3(currentStatuses, fileName);
-
-        return response(200, 'Server health check complete.');
+        return {
+            statusCode: 200,
+            body: JSON.stringify({ message: 'Server health check complete.' })
+        };
     } catch (error) {
         console.error("Error:", error);
         await sendSlackNotification({ status: `An error occurred: ${error.message}` }, 'error');
-        return response(500, 'An error occurred.');
+        return {
+            statusCode: 500,
+            body: JSON.stringify({ message: 'An error occurred.', error: error.message })
+        };
     }
 };
-
-// 汎用レスポンス関数
-const response = (statusCode, message) => ({
-    statusCode,
-    body: message,
-});
