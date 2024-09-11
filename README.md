@@ -1,75 +1,69 @@
-# Server Health Check Application
+# Googleスプレッドシートでサーバーヘルスチェックとステータス通知 "SheetsWatchdog"
 
-このアプリケーションは、Google Sheetsからサーバーリストを取得し、各サーバーの死活監視を行います。AWS Lambda上で動作します。
+このアプリケーションは、Googleスプレッドシートにリストされたサーバーのヘルスステータスをチェックし、ステータスの更新（復旧またはエラー）をSlack通知で送信するAWS Lambda関数です。サーバーのステータスはGoogleスプレッドシートから取得し、結果はAWS S3バケットに保存されます。また、Googleスプレッドシートに最新のサーバーステータスを更新します。
+
+## 主な機能
+
+- **Googleスプレッドシート連携**: Googleスプレッドシートからサーバーデータを読み込み、サーバーステータスをシートに更新します。
+- **Slack通知**: SlackのWebhook URLを使用して、サーバーステータスの復旧またはエラーをSlackチャンネルに通知します。
+- **AWS S3連携**: サーバーステータスのデータをS3バケットに保存および取得します。
+- **サーバーヘルス監視**: HTTPリクエストをサーバーのURLに送信し、サーバーのヘルスチェックを定期的に実施します。
 
 ## 必要条件
 
-- Node.js 20.x
-- AWSアカウント
-- Google Cloud Platformアカウント
-- Google Sheets API有効化
-- `secret.json`ファイル（Google Cloudのサービスアカウントキー）
+このプロジェクトを使用する前に、以下の環境が必要です:
 
-## インストール
+- AWSアカウント（LambdaとS3が設定されていること）
+- Google Sheets APIにアクセスするためのGoogle Cloudサービスアカウント
+- SlackのWebhook URL
+- 次のような構造を持つGoogleスプレッドシート（例）:
 
-1. リポジトリをクローンします。
+| サーバー名   | サーバーURL              | ステータス | 最終更新日時     |
+|--------------|--------------------------|------------|-----------------|
+| MyServer1    | https://example.com       | OK         | 2024-09-11      |
+| MyServer2    | https://example2.com      | ERROR      | 2024-09-11      |
 
-    ```sh
-    git clone https://github.com/emerauda/sheetswatchdog.git
-    cd sheetswatchdog
-    ```
+## 環境変数
 
-2. 必要なパッケージをインストールします。
+AWS Lambda関数で以下の環境変数を設定してください:
 
-    ```sh
-    npm install
-    ```
+- `GOOGLE_CLIENT_EMAIL`: Googleサービスアカウントのメールアドレス
+- `GOOGLE_PRIVATE_KEY`: Googleサービスアカウントのプライベートキー
+- `SPREADSHEET_ID`: GoogleスプレッドシートのID
+- `RANGE`: チェックするシートの範囲（例: `シート1!A2:D`）
+- `S3_BUCKET_NAME`: ステータスを保存するS3バケット名
+- `SLACK_WEBHOOK_URL`: SlackのWebhook URL
 
-3. Google Cloud Platformでサービスアカウントを作成し、`secret.json`ファイルをプロジェクトのルートディレクトリに配置します。
+## 使い方
 
-4. `index.js`ファイル内のスプレッドシートIDと範囲を適宜変更します。
+1. Google Cloud ConsoleでGoogle Sheets APIを有効にし、サービスアカウントを作成してJSONキーを取得します。
+2. 上記の環境変数をAWS Lambda関数に設定します。
+3. Googleスプレッドシートにサーバー情報を記載します。
+4. AWS Lambda関数をトリガーとして実行すると、サーバーステータスがチェックされ、GoogleスプレッドシートとSlackに通知されます。
 
-    ```javascript
-    const spreadsheetId = 'your_spreadsheet_id';
-    const range = 'Sheet1!A2:B';
-    ```
+## Slack通知例
 
-## 使用方法
+Slack通知は以下のように表示されます:
 
-1. アプリケーションを実行します。
+```
+:white_check_mark: サーバーが復旧しました :white_check_mark:
 
-    ```sh
-    node index.js
-    ```
+*Server Name:*
+MyServer1
 
-2. Google Sheetsからサーバーリストを取得し、各サーバーの死活監視を行います。結果はコンソールに出力されます。
+*Server URL:*
+https://example.com
 
-## AWS Lambdaデプロイ
+*Status:*
+OK
 
-1. プロジェクトディレクトリをZIPファイルに圧縮します。
+*Last Updated:*
+2024-09-11 10:00:00 UTC+0900 (JST)
 
-    ```sh
-    zip -r function.zip .
-    ```
-
-2. AWS Lambdaコンソールに移動し、新しい関数を作成します。
-
-3. 「.zipファイルをアップロード」を選択し、先ほど作成したZIPファイルをアップロードします。
-
-4. 必要な環境変数（例：スプレッドシートID、範囲など）を設定します。
-
-5. 関数をテストし、Google Sheetsからデータを取得してサーバーの死活監視を行うことを確認します。
-
-## ファイル構成
-
-- `index.js`: メインのアプリケーションロジック
-- `secret.json`: Google Cloudサービスアカウントキー（セキュリティのため、公開しないでください）
+[Googleスプレッドシートで確認する](https://docs.google.com/spreadsheets/d/your_spreadsheet_id/edit#gid=sheet_id)
+```
 
 ## ライセンス
 
-このプロジェクトはMITライセンスの下で公開されています。詳細は`LICENSE`ファイルを参照してください。
-
-## 参考リンク
-
-- [Building a REST API from Google Sheets with AWS Lambda and API Gateway](https://chrisboakes.com/building-a-rest-api-with-google-sheets-and-aws-lambda/)
-- [Google Sheets API Documentation](https://developers.google.com/sheets/api)
+このプロジェクトはMITライセンスの下で提供されています。
+```
