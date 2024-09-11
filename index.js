@@ -144,12 +144,16 @@ const checkServerStatus = async (row, index, sheetId, sheetName, previousStatuse
     const sheetUrl = `https://docs.google.com/spreadsheets/d/${sheetId}/edit#gid=${sheetIdInt}&range=${index + 2}:${index + 2}`; // Google Sheetsのリンク
 
     if (!serverName && !serverUrl) {
-        delete previousStatuses[serverName]; // ステータスから削除
+        delete previousStatuses[serverName]; // サーバー名とサーバーURL共に空の場合はステータスから削除
         return { index, serverName: null, serverUrl: null, status: '', color: 'white', lastUpdate: '' }; // CとDも空にする
+    }
+    // サーバーURLが空の場合は処理をスキップ
+    if (!serverUrl || serverUrl.trim() === '') {
+        return { index, serverName: null, serverUrl: null, status: '', color: 'white', lastUpdate: '' }; // スキップとして扱う
     }
 
     if (!serverName) {
-        serverName = serverUrl; // B列のURLをサーバー名として使用
+        serverName = serverUrl; // サーバー名が空でサーバーURLがある場合、B列のURLをサーバー名として使用
     }
 
     const previousStatus = previousStatuses[serverName] ? previousStatuses[serverName].status : null;
