@@ -23,26 +23,48 @@ const getAuthClient = async () => {
 
 const processSheets = async (sheetId, range) => {
     const allSheetNames = await getAllSheetNames(sheetId); // 全シート名を取得
-    const targetRange = range.includes('!') ? range : range; // シート名が指定されていない場合、全シートに対して処理する
 
-    for (const sheetName of allSheetNames) {
-        const fullRange = `${sheetName}!${targetRange}`;
-        const rows = await getSheetData(sheetId, fullRange);
+    // rangeにシート名が含まれているかを確認し、含まれていればそのまま使用
+    const [sheetNameInRange, cellRange] = range.includes('!') ? range.split('!') : [null, range];
 
+    if (sheetNameInRange) {
+        // シート名がすでに含まれている場合、そのシートのみを処理
+        const rows = await getSheetData(sheetId, range); // シート名をそのまま使う
         if (!rows || !rows.length) {
-            console.log(`No data found in sheet: ${sheetName}`);
-            continue;
+            console.log(`No data found in sheet: ${sheetNameInRange}`);
+            return;
         }
 
-        const fileName = `${objectKeyPrefix}_${sheetName}.json`;
+        const fileName = `${objectKeyPrefix}_${sheetNameInRange}.json`;
         let previousStatuses = await readStatusesFromS3(fileName);
 
-        const checks = rows.map((row, index) => checkServerStatus(row, index, sheetId, sheetName, previousStatuses));
+        const checks = rows.map((row, index) => checkServerStatus(row, index, sheetId, sheetNameInRange, previousStatuses));
         const results = await Promise.allSettled(checks);
 
         const currentStatuses = await generateCurrentStatuses(rows);
         await writeStatusesToS3(currentStatuses, fileName);
-        await updateSheet(sheetId, fullRange, results);
+        await updateSheet(sheetId, range, results);
+    } else {
+        // シート名が含まれていない場合、全シートを処理
+        for (const sheetName of allSheetNames) {
+            const fullRange = `${sheetName}!${cellRange}`;
+            const rows = await getSheetData(sheetId, fullRange);
+
+            if (!rows || !rows.length) {
+                console.log(`No data found in sheet: ${sheetName}`);
+                continue;
+            }
+
+            const fileName = `${objectKeyPrefix}_${sheetName}.json`;
+            let previousStatuses = await readStatusesFromS3(fileName);
+
+            const checks = rows.map((row, index) => checkServerStatus(row, index, sheetId, sheetName, previousStatuses));
+            const results = await Promise.allSettled(checks);
+
+            const currentStatuses = await generateCurrentStatuses(rows);
+            await writeStatusesToS3(currentStatuses, fileName);
+            await updateSheet(sheetId, fullRange, results);
+        }
     }
 };
 
@@ -60,7 +82,7 @@ const getSheetId = async (sheetId, sheetName) => {
         spreadsheetId: sheetId,
     });
     const sheet = response.data.sheets.find(s => s.properties.title === sheetName);
-    
+
     if (sheet) {
         return sheet.properties.sheetId;
     } else {
@@ -70,11 +92,27 @@ const getSheetId = async (sheetId, sheetName) => {
 
 // Google Sheetsからデータを取得する関数
 const getSheetData = async (sheetId, range) => {
-    const res = await sheets.spreadsheets.values.get({
-        spreadsheetId: sheetId,
-        range: range, // 「シート名!範囲」で取得
-    });
-    return res.data.values; // スプレッドシートの値を返す
+    // シート名とセル範囲を分離する
+    const [sheetName, cellRange] = range.includes('!') ? range.split('!') : [null, range];
+
+    // シート名がない場合のエラーチェック
+    if (!sheetName || sheetName.trim() === '') {
+        throw new Error('Invalid range: シート名が指定されていません');
+    }
+
+    // 正しいリクエストURLを生成し、データを取得
+    const requestRange = `${sheetName}!${cellRange}`;
+
+    try {
+        const res = await sheets.spreadsheets.values.get({
+            spreadsheetId: sheetId,
+            range: requestRange, // 正しいリクエスト範囲
+        });
+        return res.data.values; // スプレッドシートの値を返す
+    } catch (error) {
+        console.error('Error fetching sheet data:', error);
+        throw error;
+    }
 };
 
 // S3にステータスを保存する関数
@@ -177,7 +215,7 @@ const checkServerStatus = async (row, index, sheetId, sheetName, previousStatuse
     } catch (error) {
         let customStatus = '';
         if (error.code === 'ENOTFOUND') {
-            customStatus = 'ERROR! Not found';
+            customStatus = 'ERROR! Server not reachable';
         } else {
             customStatus = `ERROR! ${error.response ? `Status:${error.response.status}` : error.message}`;
         }
@@ -198,10 +236,13 @@ const checkServerStatus = async (row, index, sheetId, sheetName, previousStatuse
 };
 
 // Slack Block Kit形式で通知を送信する関数
-const sendSlackNotification = async (statusData, type, sheetName) => {
+const sendSlackNotification = async (statusData, type, sheetName = null) => {
     const headerText = type === 'error'
-        ? ":rotating_light: Server health check failure :rotating_light:"
-        : ":white_check_mark: Server is now alive :white_check_mark:";
+        ? ":rotating_light: Server health check failure :rotating_light:" // エラー時の通知
+        : ":white_check_mark: Server is now alive :white_check_mark:"; // 復旧時の通知
+
+    // シート名を含めるかどうかを制御
+    const header = sheetName && sheetName !== 'シート1' ? `${headerText} - ${sheetName}` : `${headerText}`;
 
     const payload = {
         blocks: [
@@ -209,7 +250,7 @@ const sendSlackNotification = async (statusData, type, sheetName) => {
                 type: "header",
                 text: {
                     type: "plain_text",
-                    text: `${headerText} - (${sheetName})`, // シート名を通知内容に含める
+                    text: header, // シート名が指定されていない場合はシート名を通知内容に含める
                     emoji: true
                 }
             },
@@ -309,7 +350,7 @@ async function updateSheet(sheetId, range, results) {
     const lastUpdateColumn = String.fromCharCode(startColumn.charCodeAt(0) + 3); // D列
 
     const updateRange = `${sheetName}!${statusColumn}${startRow}:${lastUpdateColumn}${startRow + results.length - 1}`;
-    
+
     console.log(`Updating sheet with range: ${updateRange}`); // デバッグ: 更新範囲を出力
 
     const requests = results.map(result => {
@@ -361,7 +402,7 @@ exports.handler = async (event) => {
         const sheetId = process.env.SPREADSHEET_ID;
         const range = process.env.RANGE;
 
-        // シート名が指定されていない場合、すべてのシートを処理
+        // シート名が指定されている場合、そのシートに対して処理
         await processSheets(sheetId, range);
 
         return {
