@@ -129,11 +129,11 @@ const checkServerStatus = async (row, index, sheetId, sheetName, previousStatuse
 
     if (!serverName && !serverUrl) {
         delete previousStatuses[serverName]; // サーバー名とサーバーURL共に空の場合はステータスから削除
-        return { index, serverName: null, serverUrl: null, status: '', color: 'white', lastUpdate: '' }; // CとDも空にする
+        return null; // 何も書き込まない
     }
-    // サーバーURLが空の場合は処理をスキップ
+    
     if (!serverUrl || serverUrl.trim() === '') {
-        return { index, serverName: null, serverUrl: null, status: '', color: 'white', lastUpdate: '' }; // スキップとして扱う
+        return null; // サーバーURLが空の場合は何も書き込まない
     }
 
     if (!serverName) {
@@ -146,29 +146,31 @@ const checkServerStatus = async (row, index, sheetId, sheetName, previousStatuse
         const response = await axios.get(serverUrl, { timeout: 5000 });
         const newStatus = `OK Status:${response.status}`;
 
-        if (!previousStatus || previousStatus !== newStatus) {
+        // ステータスに変化がある場合のみ更新
+        if (previousStatus !== newStatus) {
             await sendSlackNotification({ serverName, serverUrl, status: newStatus, lastUpdate: getCurrentJST(), sheetUrl }, 'recovery', sheetName);
-        } // 復旧時の通知
-
-        previousStatuses[serverName] = { status: newStatus, lastUpdate: getCurrentJST() };
-        return { index, serverName, serverUrl, status: newStatus, color: 'white', lastUpdate: getCurrentJST() };
+            previousStatuses[serverName] = { status: newStatus, lastUpdate: getCurrentJST() };
+            return { index, serverName, serverUrl, status: newStatus, color: 'white', lastUpdate: getCurrentJST() };
+        }
     } catch (error) {
         const customStatus = error.code === 'ENOTFOUND' ? 'ERROR! Server not reachable' : `ERROR! ${error.response ? `Status:${error.response.status}` : error.message}`;
 
-        if (!previousStatus || previousStatus !== customStatus) {
+        // ステータスに変化がある場合のみ更新
+        if (previousStatus !== customStatus) {
             await sendSlackNotification({ serverName, serverUrl, status: customStatus, lastUpdate: getCurrentJST(), sheetUrl }, 'error', sheetName);
-        } // エラー時の通知
-
-        previousStatuses[serverName] = { status: customStatus, lastUpdate: getCurrentJST() }; // ステータスを更新
-        return { index, serverName, serverUrl, status: customStatus, color: 'red', lastUpdate: getCurrentJST() }; // エラー時のステータス
+            previousStatuses[serverName] = { status: customStatus, lastUpdate: getCurrentJST() };
+            return { index, serverName, serverUrl, status: customStatus, color: 'red', lastUpdate: getCurrentJST() };
+        }
     }
+
+    return null; // 変化がなければ何も返さない
 };
 
 // Slack Block Kit形式で通知を送信する関数
 const sendSlackNotification = async (statusData, type, sheetName = null) => {
     const headerText = type === 'error'
-        ? ":rotating_light: Server health check failure :rotating_light:" // エラー時の通知
-        : ":white_check_mark: Server is now alive :white_check_mark:"; // 復旧時の通知
+        ? ":rotating_light: Server health check failure" // エラー時の通知
+        : ":white_check_mark: Server is now alive"; // 復旧時の通知
 
     // シート名を含めるかどうかを制御
     const header = sheetName && sheetName !== 'シート1' ? `${headerText} - ${sheetName}` : `${headerText}`;
@@ -224,11 +226,15 @@ const updateSheet = async (sheetId, range, results) => {
     const statusColumn = String.fromCharCode(startColumn.charCodeAt(0) + 2); // C列
     const lastUpdateColumn = String.fromCharCode(startColumn.charCodeAt(0) + 3); // D列
 
-    const updateRange = `${sheetName}!${statusColumn}${startRow}:${lastUpdateColumn}${startRow + results.length - 1}`;
+    const validResults = results
+        .filter(result => result.status === 'fulfilled' && result.value) // 成功した結果のみ処理
+        .map(result => result.value); // fulfilled の場合は result.value を使う
+
+    const updateRange = `${sheetName}!${statusColumn}${startRow}:${lastUpdateColumn}${startRow + validResults.length - 1}`;
     console.log(`Updating sheet with range: ${updateRange}`); // デバッグ: 更新範囲を出力
     
-    const requests = results.map(result => {
-        const { index, status, lastUpdate, color } = result.value || result.reason;
+    const requests = validResults.map(result => {
+        const { index, status, lastUpdate, color } = result;
         return {
             updateCells: {
                 range: {
@@ -251,20 +257,17 @@ const updateSheet = async (sheetId, range, results) => {
         };
     });
 
-    const request = { spreadsheetId: sheetId, resource: { requests } };
-
-    try {
-        const response = await sheets.spreadsheets.batchUpdate(request);
-        console.log('Batch update response:', { requests: requests.map(req => ({ 
-                value: req.updateCells.rows[0].values[0].userEnteredValue.stringValue
-            })),
-            responseData: response.data
-        }); // デバッグ: 更新結果を出力
-    } catch (error) {
-        console.error('Error in updateSheet:', error); // エラーログを出力
-        throw error;
+    if (requests.length > 0) { // リクエストがある場合のみシートを更新
+        const request = { spreadsheetId: sheetId, resource: { requests } };
+        try {
+            const response = await sheets.spreadsheets.batchUpdate(request);
+            console.log('Batch update response:', response.data); // デバッグ: 更新結果を出力
+        } catch (error) {
+            console.error('Error in updateSheet:', error); // エラーログを出力
+            throw error;
+        }
     }
-}
+};
 
 // Lambda関数のメイン処理
 exports.handler = async (event) => {
