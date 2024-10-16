@@ -364,7 +364,7 @@ const processSheets = async (sheetId, range) => {
     const allSheetNames = await getAllSheetNamesAndIds(sheetId); // 全シート名を取得
     // rangeにシート名が含まれているかを確認し、含まれていればそのまま使用
     const [sheetNameInRange, cellRange] = range.includes('!') ? range.split('!') : [null, range];
-    console.log(`Processing sheets: ${allSheetNames.map(sheet => sheet.title).join(', ')}`); // 処理対象のシート名全てをログ出力
+    console.log(`All sheets: ${allSheetNames.map(sheet => sheet.title).join(', ')}`); // シート名全てをログ出力
 
     if (sheetNameInRange) {
         // rangeにシート名が含まれている場合、そのシートのみを処理
@@ -380,7 +380,7 @@ const processSheets = async (sheetId, range) => {
 
 // 各シートの処理関数
 const processSingleSheet = async (sheetId, range, sheetName) => {
-    console.log(`Processing sheet: ${sheetName}`);
+    console.log(`Processing sheet: ${sheetName}`); // 処理対象のシート名をログ出力
 
     const rows = await getSheetData(sheetId, range);
     if (!rows || !rows.length) {
