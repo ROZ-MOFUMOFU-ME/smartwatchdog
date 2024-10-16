@@ -116,7 +116,7 @@ const generateCurrentStatuses = async (rows) => {
     for (let i = 0; i < rows.length; i++) {
         const [serverName, serverUrl, status, lastUpdate] = rows[i];
         if (serverName || serverUrl) {
-            const key = serverName || serverUrl;
+            const key = serverName || serverUrl; // A列が空ならB列をキーに使用
             currentStatuses[key] = { status, lastUpdate };
         }
     }
@@ -307,7 +307,7 @@ const updateSheet = async (sheetId, range, results) => {
         return {
             updateCells: {
                 range: {
-                    sheetId: sheetIdInt,
+                    sheetId: sheetIdInt, // 正しいシートIDを使用
                     startRowIndex: index + startRow - 1,
                     endRowIndex: index + startRow,
                     startColumnIndex: statusColumn.charCodeAt(0) - 'A'.charCodeAt(0),
@@ -326,13 +326,13 @@ const updateSheet = async (sheetId, range, results) => {
         };
     });
 
-    if (requests.length > 0) {
+    if (requests.length > 0) { // リクエストがある場合のみシートを更新
         const request = { spreadsheetId: sheetId, resource: { requests } };
         try {
             const response = await sheets.spreadsheets.batchUpdate(request);
-            console.log('Batch update response:', response.data);
+            console.log('Batch update response:', response.data); // デバッグ: 更新結果を出力
         } catch (error) {
-            console.error('Error in updateSheet:', error);
+            console.error('Error in updateSheet:', error); // エラーログを出力
             throw error;
         }
     }
@@ -384,7 +384,7 @@ const processSingleSheet = async (sheetId, range, sheetName) => {
 
     const rows = await getSheetData(sheetId, range);
     if (!rows || !rows.length) {
-        console.log(`No data found in sheet: ${sheetName}`);
+        console.log(`No data found in sheet: ${sheetName}`); // データが見つからない場合のログ
         return;
     }
 
