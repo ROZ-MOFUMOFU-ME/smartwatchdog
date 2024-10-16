@@ -111,59 +111,74 @@ const streamToString = (stream) => {
 // Googleスプレッドシートの内容を基にJSONデータを生成する関数
 const generateCurrentStatuses = async (rows) => {
     const currentStatuses = {};
+    const removedStatuses = {};
+
     for (let i = 0; i < rows.length; i++) {
         const [serverName, serverUrl, status, lastUpdate] = rows[i];
         if (serverName || serverUrl) {
-            const key = serverName || serverUrl; // A列が空ならB列をキーに使用
+            const key = serverName || serverUrl;
             currentStatuses[key] = { status, lastUpdate };
         }
     }
-    return currentStatuses; // ステータスデータを返す
+
+    return { currentStatuses, removedStatuses };
+};
+
+// 削除するステータスをフィルタリングする関数
+const filterCurrentStatuses = (currentStatuses, removedStatuses) => {
+    for (const key in removedStatuses) {
+        if (currentStatuses[key]) {
+            delete currentStatuses[key]; // 削除されたステータスをフィルタリング
+        }
+    }
+    return currentStatuses;
 };
 
 // サーバーステータスのチェックとSlack通知を行う関数
-const checkServerStatus = async (row, index, sheetId, sheetName, previousStatuses) => {
+const checkServerStatus = async (row, index, sheetId, sheetName, previousStatuses, currentStatuses) => {
     let [serverName, serverUrl] = row;
     const sheetIdInt = await getSheetId(sheetId, sheetName);
     const sheetUrl = `https://docs.google.com/spreadsheets/d/${sheetId}/edit#gid=${sheetIdInt}&range=${index + 2}:${index + 2}`; // Google Sheetsのリンク
 
     if (!serverName && !serverUrl) {
-        delete previousStatuses[serverName]; // サーバー名とサーバーURL共に空の場合はステータスから削除
-        return null; // 何も書き込まない
+        // サーバー名とサーバーURLが共に空の場合、C列とD列を削除し、ステータスも削除
+        return {
+            index,
+            deleteColumns: true, // C列とD列を削除するフラグを返す
+        };
     }
-    
+
     if (!serverUrl || serverUrl.trim() === '') {
-        return null; // サーバーURLが空の場合は何も書き込まない
+        return null; // サーバーURLが空の場合は処理をスキップ
     }
 
     if (!serverName) {
-        serverName = serverUrl; // サーバー名が空でサーバーURLがある場合、B列のURLをサーバー名として使用
+        serverName = serverUrl; // サーバー名が空の場合、サーバーURLをサーバー名として使用
     }
 
     const previousStatus = previousStatuses[serverName]?.status || null;
+    let newStatus = '';
 
     try {
         const response = await axios.get(serverUrl, { timeout: 5000 });
-        const newStatus = `OK Status:${response.status}`;
-
-        // ステータスに変化がある場合のみ更新
-        if (previousStatus !== newStatus) {
-            await sendSlackNotification({ serverName, serverUrl, status: newStatus, lastUpdate: getCurrentJST(), sheetUrl }, 'recovery', sheetName);
-            previousStatuses[serverName] = { status: newStatus, lastUpdate: getCurrentJST() };
-            return { index, serverName, serverUrl, status: newStatus, color: 'white', lastUpdate: getCurrentJST() };
-        }
+        newStatus = `OK Status:${response.status}`;
     } catch (error) {
-        const customStatus = error.code === 'ENOTFOUND' ? 'ERROR! Server not reachable' : `ERROR! ${error.response ? `Status:${error.response.status}` : error.message}`;
-
-        // ステータスに変化がある場合のみ更新
-        if (previousStatus !== customStatus) {
-            await sendSlackNotification({ serverName, serverUrl, status: customStatus, lastUpdate: getCurrentJST(), sheetUrl }, 'error', sheetName);
-            previousStatuses[serverName] = { status: customStatus, lastUpdate: getCurrentJST() };
-            return { index, serverName, serverUrl, status: customStatus, color: 'red', lastUpdate: getCurrentJST() };
-        }
+        newStatus = error.code === 'ENOTFOUND' ? 'ERROR! Server not reachable' : `ERROR! ${error.response ? `Status:${error.response.status}` : error.message}`;
     }
 
-    return null; // 変化がなければ何も返さない
+    // ステータスに変化がない場合は処理をスキップ
+    if (previousStatus === newStatus) {
+        return null;
+    }
+
+    // ステータスを更新し、後でS3に保存するためにcurrentStatusesに追加
+    currentStatuses[serverName] = { status: newStatus, lastUpdate: getCurrentJST() };
+
+    // ステータスに変化があった場合にSlack通知を送信
+    const notificationType = newStatus.startsWith('OK') ? 'recovery' : 'error';
+    await sendSlackNotification({ serverName, serverUrl, status: newStatus, lastUpdate: getCurrentJST(), sheetUrl }, notificationType, sheetName);
+
+    return { index, serverName, serverUrl, status: newStatus, color: newStatus.startsWith('OK') ? 'white' : 'red', lastUpdate: getCurrentJST() };
 };
 
 // Slack Block Kit形式で通知を送信する関数
@@ -218,7 +233,11 @@ const getCurrentJST = () => {
 
 // スプレッドシートの更新とセルの色設定を同時に行う関数
 const updateSheet = async (sheetId, range, results) => {
-    const colorMap = { 'red': { red: 0.956, green: 0.8, blue: 0.8 }, 'white': { red: 1, green: 1, blue: 1 } }; // 色のマッピング
+    const colorMap = { 
+        'red': { red: 0.956, green: 0.8, blue: 0.8 }, // エラー時の色
+        'white': { red: 1, green: 1, blue: 1 }, // デフォルトのホワイト
+    };
+
     const [sheetName, cellRange] = range.split('!');
     const sheetIdInt = await getSheetId(sheetId, sheetName);
     const startColumn = cellRange.match(/[A-Z]+/g)[0];
@@ -226,44 +245,94 @@ const updateSheet = async (sheetId, range, results) => {
     const statusColumn = String.fromCharCode(startColumn.charCodeAt(0) + 2); // C列
     const lastUpdateColumn = String.fromCharCode(startColumn.charCodeAt(0) + 3); // D列
 
-    const validResults = results
-        .filter(result => result.status === 'fulfilled' && result.value) // 成功した結果のみ処理
-        .map(result => result.value); // fulfilled の場合は result.value を使う
+    const validResults = results.filter(result => result.status === 'fulfilled' && result.value).map(result => result.value);
 
-    const updateRange = `${sheetName}!${statusColumn}${startRow}:${lastUpdateColumn}${startRow + validResults.length - 1}`;
-    console.log(`Updating sheet with range: ${updateRange}`); // デバッグ: 更新範囲を出力
-    
+    if (validResults.length === 0) {
+        console.log(`No status changes detected in sheet: ${sheetName}, skipping sheet update.`);
+        return;
+    }
+
     const requests = validResults.map(result => {
-        const { index, status, lastUpdate, color } = result;
+        const { index, status, lastUpdate, color, deleteColumns, deleteFromS3, needsUpdate } = result;
+
+        // A列とB列が空の場合、C列とD列を削除し、色をデフォルトに戻す
+        if (deleteColumns) {
+            return {
+                updateCells: {
+                    range: {
+                        sheetId: sheetIdInt,
+                        startRowIndex: index + startRow - 1,
+                        endRowIndex: index + startRow,
+                        startColumnIndex: statusColumn.charCodeAt(0) - 'A'.charCodeAt(0),
+                        endColumnIndex: lastUpdateColumn.charCodeAt(0) - 'A'.charCodeAt(0) + 1,
+                    },
+                    rows: [
+                        {
+                            values: [
+                                { userEnteredValue: null, userEnteredFormat: { backgroundColor: colorMap['white'] } }, // C列（ステータス）をクリアしてホワイトに設定
+                                { userEnteredValue: null, userEnteredFormat: { backgroundColor: colorMap['white'] } }, // D列（最終更新日時）をクリアしてホワイトに設定
+                            ],
+                        },
+                    ],
+                    fields: 'userEnteredValue,userEnteredFormat.backgroundColor', // 値と色をクリア
+                },
+            };
+        }
+
+        // C列とD列が空の場合、新しいステータスと更新日時を設定
+        if (needsUpdate) {
+            return {
+                updateCells: {
+                    range: {
+                        sheetId: sheetIdInt,
+                        startRowIndex: index + startRow - 1,
+                        endRowIndex: index + startRow,
+                        startColumnIndex: statusColumn.charCodeAt(0) - 'A'.charCodeAt(0),
+                        endColumnIndex: lastUpdateColumn.charCodeAt(0) - 'A'.charCodeAt(0) + 1,
+                    },
+                    rows: [
+                        {
+                            values: [
+                                { userEnteredValue: { stringValue: status }, userEnteredFormat: { backgroundColor: colorMap[color] } },
+                                { userEnteredValue: { stringValue: lastUpdate }, userEnteredFormat: { backgroundColor: colorMap['white'] } }, // 更新日時は常に白色
+                            ],
+                        },
+                    ],
+                    fields: 'userEnteredValue,userEnteredFormat.backgroundColor',
+                },
+            };
+        }
+
+        // C列とD列を更新
         return {
             updateCells: {
                 range: {
-                    sheetId: sheetIdInt, // 正しいシートIDを使用
+                    sheetId: sheetIdInt,
                     startRowIndex: index + startRow - 1,
                     endRowIndex: index + startRow,
                     startColumnIndex: statusColumn.charCodeAt(0) - 'A'.charCodeAt(0),
-                    endColumnIndex: lastUpdateColumn.charCodeAt(0) - 'A'.charCodeAt(0) + 1
+                    endColumnIndex: lastUpdateColumn.charCodeAt(0) - 'A'.charCodeAt(0) + 1,
                 },
                 rows: [
                     {
                         values: [
                             { userEnteredValue: { stringValue: status }, userEnteredFormat: { backgroundColor: colorMap[color] } },
-                            { userEnteredValue: { stringValue: lastUpdate } }
-                        ]
-                    }
+                            { userEnteredValue: { stringValue: lastUpdate }, userEnteredFormat: { backgroundColor: colorMap['white'] } },
+                        ],
+                    },
                 ],
-                fields: 'userEnteredValue,userEnteredFormat.backgroundColor'
-            }
+                fields: 'userEnteredValue,userEnteredFormat.backgroundColor',
+            },
         };
     });
 
-    if (requests.length > 0) { // リクエストがある場合のみシートを更新
+    if (requests.length > 0) {
         const request = { spreadsheetId: sheetId, resource: { requests } };
         try {
             const response = await sheets.spreadsheets.batchUpdate(request);
-            console.log('Batch update response:', response.data); // デバッグ: 更新結果を出力
+            console.log('Batch update response:', response.data);
         } catch (error) {
-            console.error('Error in updateSheet:', error); // エラーログを出力
+            console.error('Error in updateSheet:', error);
             throw error;
         }
     }
@@ -311,20 +380,49 @@ const processSheets = async (sheetId, range) => {
 
 // 各シートの処理関数
 const processSingleSheet = async (sheetId, range, sheetName) => {
-    const rows = await getSheetData(sheetId, range); // シート名をそのまま使用する
-    console.log(`Processing sheet: ${sheetName}`); // 処理対象のシート名をログ出力
+    console.log(`Processing sheet: ${sheetName}`);
+
+    const rows = await getSheetData(sheetId, range);
     if (!rows || !rows.length) {
-        console.log(`No data found in sheet: ${sheetName}`); // データが見つからない場合のログ
+        console.log(`No data found in sheet: ${sheetName}`);
         return;
     }
 
     const fileName = `${objectKeyPrefix}_${sheetName}.json`;
     let previousStatuses = await readStatusesFromS3(fileName);
 
-    const checks = rows.map((row, index) => checkServerStatus(row, index, sheetId, sheetName, previousStatuses));
+    // generateCurrentStatusesを呼び出してcurrentStatusesとremovedStatusesを取得
+    const { currentStatuses, removedStatuses } = await generateCurrentStatuses(rows);
+
+    // 削除されたサーバーをpreviousStatusesから削除
+    const previousKeys = Object.keys(previousStatuses);
+    const currentKeys = Object.keys(currentStatuses);
+
+    previousKeys.forEach(key => {
+        if (!currentKeys.includes(key)) {
+            removedStatuses[key] = true;
+        }
+    });
+
+    for (const key in removedStatuses) {
+        if (previousStatuses[key]) {
+            delete previousStatuses[key];
+        }
+    }
+
+    // ステータスを個別にチェック
+    const checks = rows.map((row, index) => checkServerStatus(row, index, sheetId, sheetName, previousStatuses, currentStatuses));
     const results = await Promise.allSettled(checks);
 
-    const currentStatuses = await generateCurrentStatuses(rows);
-    await writeStatusesToS3(currentStatuses, fileName);
-    await updateSheet(sheetId, range, results);
+    // updateSheetを呼ぶ前にステータスの変更を確認
+    const hasChanges = Object.keys(currentStatuses).some(key => {
+        return !previousStatuses[key] || JSON.stringify(previousStatuses[key]) !== JSON.stringify(currentStatuses[key]);
+    });
+
+    if (hasChanges || results.some(result => result.value && result.value.deleteColumns)) {
+        await writeStatusesToS3({ ...previousStatuses, ...currentStatuses }, fileName); // 前回のステータスと今回の変更をマージ
+        await updateSheet(sheetId, range, results); // 変更があったサーバーのみ更新
+    } else {
+        console.log(`No status changes detected in sheet: ${sheetName}, skipping S3 and sheet update.`);
+    }
 };
