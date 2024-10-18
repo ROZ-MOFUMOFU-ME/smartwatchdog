@@ -9,14 +9,14 @@
   },
   "repository": {
     "type": "git",
-    "url": "git://github.com/emerauda/sheetswatchdog.git"
+    "url": "git://github.com/digitalregion/sheetswatchdog.git"
   },
   "author": "Aoi Emerauda",
   "license": "MIT",
   "bugs": {
-    "url": "https://github.com/emerauda/sheetswatchdog/issues"
+    "url": "https://github.com/digitalregion/sheetswatchdog/issues"
   },
-  "homepage": "https://github.com/emerauda/sheetswatchdog#readme",
+  "homepage": "https://github.com/digitalregion/sheetswatchdog#readme",
   "dependencies": {
     "@aws-sdk/client-s3": "^3.674.0",
     "axios": "^1.7.7",
