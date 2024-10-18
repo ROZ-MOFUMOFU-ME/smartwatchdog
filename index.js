@@ -87,11 +87,16 @@ const getSheetData = async (sheetId, range) => {
 };
 
 // S3にステータスを保存する関数
-const writeStatusesToS3 = async (statuses, fileName) => {
+const writeStatusesToS3 = async (statuses, fileName, sheetUrl) => {
+    const dataToWrite = {
+        sheetUrl, // スプレッドシートのURLを追加
+        statuses, // ステータスデータ
+    };
+
     const params = {
         Bucket: process.env.S3_BUCKET_NAME, // S3バケット名
         Key: fileName, // S3に保存するファイルの名前
-        Body: JSON.stringify(statuses, null, 2), // JSONデータを文字列化して保存
+        Body: JSON.stringify(dataToWrite, null, 2), // JSONデータを文字列化して保存
         ContentType: 'application/json', // コンテンツタイプをJSONとして設定
     };
     await s3Client.send(new PutObjectCommand(params)); // S3にデータを書き込む
@@ -139,16 +144,6 @@ const generateCurrentStatuses = async (rows) => {
     }
 
     return { currentStatuses, removedStatuses }; // 現在のステータスと削除されたステータスを返す
-};
-
-// 削除するステータスをフィルタリングする関数
-const filterCurrentStatuses = (currentStatuses, removedStatuses) => {
-    for (const key in removedStatuses) {
-        if (currentStatuses[key]) {
-            delete currentStatuses[key]; // 削除されたステータスをフィルタリング
-        }
-    }
-    return currentStatuses; // フィルタリングされたステータスを返す
 };
 
 // サーバーステータスのチェックとSlack通知を行う関数
@@ -404,7 +399,9 @@ const processSingleSheet = async (sheetId, range, sheetName) => {
 
     // S3に保存するファイル名を生成
     const fileName = `${objectKeyPrefix}_${sheetName}.json`;
-    let previousStatuses = await readStatusesFromS3(fileName);
+    let previousData = await readStatusesFromS3(fileName);
+    let previousStatuses = previousData.statuses || {};
+    let previousSheetUrl = previousData.sheetUrl || '';
 
     const { currentStatuses, removedStatuses } = await generateCurrentStatuses(rows); // 現在のステータスと削除されたステータスを取得
 
@@ -429,13 +426,14 @@ const processSingleSheet = async (sheetId, range, sheetName) => {
     const results = await Promise.allSettled(checks); // すべてのチェックを待機
 
     // updateSheetを呼ぶ前にステータスの変更を確認
+    const sheetUrl = `https://docs.google.com/spreadsheets/d/${sheetId}/edit#gid=${await getSheetId(sheetId, sheetName)}`; // Google Sheetsのリンク
     const hasChanges = Object.keys(currentStatuses).some(key => { // 変更があるかどうかを確認
         return !previousStatuses[key] || JSON.stringify(previousStatuses[key]) !== JSON.stringify(currentStatuses[key]); // 前回のステータスと現在のステータスが異なる場合
-    });
+    }) || Object.keys(removedStatuses).length > 0 || previousSheetUrl !== sheetUrl; // 削除されたステータスがある場合やシートURLが異なる場合も変更とみなす
 
     // currentStatusesをフィルタリングして削除されたステータスを除外
     if (hasChanges || results.some(result => result.value && result.value.deleteColumns)) { // 変更があるか、削除されたステータスがある場合
-        await writeStatusesToS3({ ...previousStatuses, ...currentStatuses }, fileName); // 前回のステータスと今回の変更をマージしてS3に保存
+        await writeStatusesToS3({ ...previousStatuses, ...currentStatuses }, fileName, sheetUrl); // 前回のステータスと今回の変更をマージしてS3に保存
         await updateSheet(sheetId, range, results); // 変更があったサーバーのみシートを更新
         console.log(`S3 and sheet updated with status changes in ${sheetName}.`); // S3とシートの更新が完了したログ
     } else {
