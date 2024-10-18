@@ -2,7 +2,7 @@ const { google } = require('googleapis');
 const axios = require('axios');
 const sheets = google.sheets('v4');
 const https = require('https');
-const { S3Client, GetObjectCommand, PutObjectCommand, DeleteObjectCommand, ListObjectsV2Command } = require('@aws-sdk/client-s3');
+const { S3Client, GetObjectCommand, PutObjectCommand } = require('@aws-sdk/client-s3');
 
 // AWS S3クライアントを初期化
 const s3Client = new S3Client({ region: process.env.AWS_REGION }); // AWSのリージョンを自動取得
@@ -13,7 +13,7 @@ const objectKeyPrefix = 'server_status'; // S3に保存するファイル名の�
 const getAuthClient = async () => {
     const auth = new google.auth.GoogleAuth({
         credentials: {
-            client_email: process.env.GOOGLE_CLIENT_EMAIL, // 環境変数からサービスアカウントのメールを取得
+            client_email: process.env.GOOGLE_CLIENT_EMAIL, // 環境変数からサービスアカウントのメールアドレスを取得
             private_key: process.env.GOOGLE_PRIVATE_KEY.replace(/\\n/g, '\n'), // 改行コードを適切に変換
         },
         scopes: ['https://www.googleapis.com/auth/spreadsheets'], // Google Sheets APIのスコープ
@@ -21,15 +21,32 @@ const getAuthClient = async () => {
     return await auth.getClient(); // 認証クライアントを返す
 };
 
-// Google Sheetsの全シート名とシートIDを取得する関数
-const getAllSheetNamesAndIds = async (sheetId) => {
-    const response = await sheets.spreadsheets.get({
-        spreadsheetId: sheetId,
-    });
-    return response.data.sheets.map(sheet => ({
-        title: sheet.properties.title,
-        id: sheet.properties.sheetId
-    })); // すべてのシート名とシートIDを取得
+// リトライロジックを含むGoogle Sheetsの全シート名とシートIDを取得する関数
+const getAllSheetNamesAndIds = async (sheetId, retries = 10, delay = 5000) => {
+    let retryCount = 0; // リトライ回数をカウント
+    try {
+        const response = await sheets.spreadsheets.get({
+            spreadsheetId: sheetId,
+        });
+        return response.data.sheets.map(sheet => ({
+            title: sheet.properties.title,
+            id: sheet.properties.sheetId
+        })); // すべてのシート名とシートIDを取得
+    } catch (error) {
+        if (retries > 0 && error.code === 429) {
+            retryCount++;
+            if (retryCount % 5 === 0) {
+                console.warn(`Quota exceeded, retrying... (${retries} retries left, ${retryCount} attempts so far)`);
+            }
+            await new Promise(resolve => setTimeout(resolve, delay)); // 指数バックオフで待機時間を増やす
+            return getAllSheetNamesAndIds(sheetId, retries - 1, delay * 2);
+        } else {
+            if (retryCount > 0) {
+                console.warn(`Quota exceeded, retried ${retryCount} times`);
+            }
+            throw error;
+        }
+    }
 };
 
 // Google Sheetsのシート名から特定のシートIDを取得する関数
@@ -96,25 +113,6 @@ const readStatusesFromS3 = async (fileName) => {
             throw error; // それ以外のエラーはスロー
         }
     }
-};
-
-// S3からオブジェクトを削除する関数
-const deleteObjectFromS3 = async (fileName) => {
-    const params = {
-        Bucket: process.env.S3_BUCKET_NAME, // S3バケット名
-        Key: fileName, // S3から削除するファイルの名前
-    };
-    await s3Client.send(new DeleteObjectCommand(params)); // S3からデータを削除
-};
-
-// S3バケット内のすべてのオブジェクトをリストする関数
-const listS3Objects = async () => {
-    const params = {
-        Bucket: process.env.S3_BUCKET_NAME, // S3バケット名
-        Prefix: objectKeyPrefix, // プレフィックスでフィルタリング
-    };
-    const data = await s3Client.send(new ListObjectsV2Command(params));
-    return data.Contents.map(item => item.Key); // オブジェクトキーのリストを返す
 };
 
 // ストリームデータを文字列に変換する関数
@@ -231,7 +229,13 @@ const sendSlackNotification = async (statusData, type, sheetName = null) => {
     return new Promise((resolve, reject) => {
         const req = https.request(options, (res) => {
             res.setEncoding('utf8');
-            res.on('data', (chunk) => console.log(`Slack response: ${chunk}`)); // Slackからのレスポンス
+            let responseCount = 0; // レスポンスカウントを初期化
+            res.on('data', (chunk) => {
+                responseCount++;
+                if (responseCount % 5 === 0) { // 5回ごとにログを出力
+                    console.log(`Slack response: ${chunk}`);
+                }
+            }); // Slackからのレスポンス
             res.on('end', () => resolve()); // 通知が成功した場合は完了
         });
         req.on('error', (e) => {
@@ -266,7 +270,7 @@ const updateSheet = async (sheetId, range, results) => {
 
     const validResults = results.filter(result => result.status === 'fulfilled' && result.value).map(result => result.value);
     const requests = validResults.map(result => {
-        const { index, status, lastUpdate, color, deleteColumns, deleteFromS3, needsUpdate } = result;
+        const { index, status, lastUpdate, color, deleteColumns, needsUpdate } = result;
 
         // A列とB列が空の場合、C列とD列を削除し、色をデフォルトに戻す
         if (deleteColumns) {
@@ -316,7 +320,6 @@ const updateSheet = async (sheetId, range, results) => {
             };
         }
 
-        // S3から削除された場合、C列とD列を削除し、色をデフォルトに戻す
         return {
             updateCells: {
                 range: {
@@ -374,7 +377,7 @@ exports.handler = async (event) => {
 // シートの処理関数
 const processSheets = async (sheetId, range) => {
     const allSheetNames = await getAllSheetNamesAndIds(sheetId); // 全シート名を取得
-    const [sheetNameInRange, cellRange] = range.includes('!') ? range.split('!') : [null, range]; // rangeにシート名が含まれているかを確認し、含まれていればそのまま使用
+    const [sheetNameInRange, cellRange] = range.includes('!') ? range.split('!') : [null, range]; // // rangeにシート名が含まれているかを確認し、含まれていればそのまま使用
     console.log(`All sheets: ${allSheetNames.map(sheet => sheet.title).join(', ')}`); // シート名全てをログ出力
 
     if (sheetNameInRange) {
@@ -386,18 +389,6 @@ const processSheets = async (sheetId, range) => {
             const fullRange = `${sheet.title}!${cellRange}`;
             await processSingleSheet(sheetId, fullRange, sheet.title);
         }
-    }
-
-    // S3に存在するファイルをリスト
-    const s3Objects = await listS3Objects();
-    const s3SheetNames = s3Objects.map(key => key.replace(`${objectKeyPrefix}_`, '').replace('.json', ''));
-
-    // 現在のシート名リストとS3に存在するシート名リストを比較し、存在しなくなったシートのファイルを削除
-    const sheetsToDelete = s3SheetNames.filter(sheetName => !allSheetNames.some(sheet => sheet.title === sheetName));
-    for (const sheetName of sheetsToDelete) {
-        const fileName = `${objectKeyPrefix}_${sheetName}.json`;
-        await deleteObjectFromS3(fileName);
-        console.log(`Deleted S3 object for removed sheet: ${sheetName}`); // S3オブジェクトの削除ログ
     }
 };
 
@@ -433,22 +424,18 @@ const processSingleSheet = async (sheetId, range, sheetName) => {
         }
     }
 
-    // currentStatusesをフィルタリングして削除されたステータスを除外
-    const filteredCurrentStatuses = filterCurrentStatuses(currentStatuses, removedStatuses);
-
     // ステータスを個別にチェック
-    const checks = rows.map((row, index) => checkServerStatus(row, index, sheetId, sheetName, previousStatuses, filteredCurrentStatuses));
+    const checks = rows.map((row, index) => checkServerStatus(row, index, sheetId, sheetName, previousStatuses, currentStatuses));
     const results = await Promise.allSettled(checks); // すべてのチェックを待機
 
     // updateSheetを呼ぶ前にステータスの変更を確認
-    const hasChanges = Object.keys(filteredCurrentStatuses).some(key => {
-        // 変更があるかどうかを確認
-        return !previousStatuses[key] || JSON.stringify(previousStatuses[key]) !== JSON.stringify(filteredCurrentStatuses[key]); // 前回のステータスと現在のステータスが異なる場合
+    const hasChanges = Object.keys(currentStatuses).some(key => { // 変更があるかどうかを確認
+        return !previousStatuses[key] || JSON.stringify(previousStatuses[key]) !== JSON.stringify(currentStatuses[key]); // 前回のステータスと現在のステータスが異なる場合
     });
 
-    if (hasChanges || results.some(result => result.value && result.value.deleteColumns)) {
-        // 変更があるか、削除されたステータスがある場合
-        await writeStatusesToS3({ ...previousStatuses, ...filteredCurrentStatuses }, fileName); // 前回のステータスと今回の変更をマージしてS3に保存
+    // currentStatusesをフィルタリングして削除されたステータスを除外
+    if (hasChanges || results.some(result => result.value && result.value.deleteColumns)) { // 変更があるか、削除されたステータスがある場合
+        await writeStatusesToS3({ ...previousStatuses, ...currentStatuses }, fileName); // 前回のステータスと今回の変更をマージしてS3に保存
         await updateSheet(sheetId, range, results); // 変更があったサーバーのみシートを更新
         console.log(`S3 and sheet updated with status changes in ${sheetName}.`); // S3とシートの更新が完了したログ
     } else {
