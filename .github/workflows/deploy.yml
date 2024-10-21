@@ -1,0 +1,40 @@
+name: Deploy Node.js project to AWS Lambda Function
+
+on:
+  push:
+    branches: ["main"]
+
+env:
+  NODE_VERSION: '20.x'                      # set this to the node version to use (e.g. '8.x', '10.x', '12.x')
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+    - name: 'Checkout GitHub Action'
+      uses: actions/checkout@v4
+      
+    - name: 'Setup Node ${{ env.NODE_VERSION }} Environment'
+      uses: actions/setup-node@v4
+      with:
+        node-version: ${{ env.NODE_VERSION }}
+
+    - name: 'Zip project'
+      run: zip -r function.zip . -x ".env" "*.git*" "LICENSE" ".gitignore" ".env.example" "package-lock.json" "*.md"
+
+    - name: 'Configure AWS CLI'
+      uses: aws-actions/configure-aws-credentials@v4
+      with:
+        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        aws-region: ${{ secrets.AWS_REGION }}
+
+    - name: 'Upload to S3'
+      run: aws s3 cp function.zip s3://sheetswatchdog/function.zip
+
+    - name: 'Deploy to Lambda'
+      run: |
+        aws lambda update-function-code \
+          --function-name SheetsWatchdog \
+          --s3-bucket sheetswatchdog \
+          --s3-key function.zip
