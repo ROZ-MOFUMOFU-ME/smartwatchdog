@@ -23,7 +23,7 @@ jobs:
       run: npm install
 
     - name: 'Zip project'
-      run: zip -r function.zip . -x ".env" ".git/\*" ".github/\*" "LICENSE" ".gitignore" ".env.example" "package-lock.json" "*.md"
+      run: zip -r function.zip . -x .git/\* .github/\* ".env" "LICENSE" ".gitignore" ".env.example" "package-lock.json" "*.md"
 
     - name: 'Configure AWS CLI'
       uses: aws-actions/configure-aws-credentials@v4
