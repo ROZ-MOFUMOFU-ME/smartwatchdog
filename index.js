@@ -157,6 +157,7 @@ const checkServerStatus = async (row, index, sheetId, sheetName, previousStatuse
         return {
             index,
             deleteColumns: true, // C列とD列を削除するフラグを返す
+            needsUpdate: true // 更新が必要
         };
     }
 
@@ -170,6 +171,8 @@ const checkServerStatus = async (row, index, sheetId, sheetName, previousStatuse
 
     const previousStatus = previousStatuses[serverName]?.status || null; // 前回のステータスを取得
     let newStatus = ''; // 新しいステータスを初期化
+    let notificationType = ''; // 通知の種類を初期化
+    let mentionChannel = false; // @channelメンションのフラグを初期化
 
     try {
         const response = await axios.get(serverUrl, { timeout: 5000 });
@@ -186,15 +189,25 @@ const checkServerStatus = async (row, index, sheetId, sheetName, previousStatuse
     // ステータスを更新し、後でS3に保存するためにcurrentStatusesに追加
     currentStatuses[serverName] = { status: newStatus, lastUpdate: getCurrentJST() };
 
-    // ステータスに変化があった場合にSlack通知を送信
-    const notificationType = newStatus.startsWith('OK') ? 'recovery' : 'error';
-    await sendSlackNotification({ serverName, serverUrl, status: newStatus, lastUpdate: getCurrentJST(), sheetUrl }, notificationType, sheetName);
+    // ステータス変化の種類を判定
+    if (newStatus.startsWith('ERROR')) {
+        notificationType = 'error';
+        mentionChannel = !previousStatus || !previousStatus.startsWith('ERROR'); // 新規サーバーまたは前回が正常の場合に@channelを追加
+    } else if (newStatus.startsWith('OK')) {
+        notificationType = 'recovery';
+    }
 
-    return { index, serverName, serverUrl, status: newStatus, color: newStatus.startsWith('OK') ? 'white' : 'red', lastUpdate: getCurrentJST() }; // ステータスと色を返す
+    // Slack通知を送信
+    await sendSlackNotification({ serverName, serverUrl, status: newStatus, lastUpdate: getCurrentJST(), sheetUrl }, notificationType, sheetName, mentionChannel);
+
+    // 新規サーバーの処理を正常とエラーでまとめる
+    const needsUpdate = !previousStatus || newStatus.startsWith('ERROR');
+
+    return { index, serverName, serverUrl, status: newStatus, color: newStatus.startsWith('OK') ? 'white' : 'red', lastUpdate: getCurrentJST(), needsUpdate }; // ステータスと色を返す
 };
 
 // Slack Block Kit形式で通知を送信する関数
-const sendSlackNotification = async (statusData, type, sheetName = null) => {
+const sendSlackNotification = async (statusData, type, sheetName = null, mentionChannel = false) => {
     const headerText = type === 'error'
         ? ":rotating_light: Server health check failure" // エラー時の通知
         : ":white_check_mark: Server is now alive"; // 復旧時の通知
@@ -204,6 +217,7 @@ const sendSlackNotification = async (statusData, type, sheetName = null) => {
 
     const payload = {
         blocks: [
+            ...(mentionChannel ? [{ type: "section", text: { type: "mrkdwn", text: '@channel' } }] : []),
             { type: "header", text: { type: "plain_text", text: header, emoji: true } },
             { type: "section", fields: [{ type: "mrkdwn", text: `*Server Name:*\n${statusData.serverName || 'N/A'}` }, { type: "mrkdwn", text: `*Server URL:*\n${statusData.serverUrl || 'N/A'}` }] },
             { type: "section", fields: [{ type: "mrkdwn", text: `*Status:*\n:${type === 'error' ? 'red_circle' : 'large_green_circle'}: ${statusData.status}` }, { type: "mrkdwn", text: `*Last Updated:*\n${statusData.lastUpdate}` }] },
@@ -256,88 +270,48 @@ const updateSheet = async (sheetId, range, results) => {
         'white': { red: 1, green: 1, blue: 1 }, // デフォルトのホワイト
     };
 
+    // rangeをシート名とセル範囲に分割
     const [sheetName, cellRange] = range.split('!');
-    const sheetIdInt = await getSheetId(sheetId, sheetName);
-    const startColumn = cellRange.match(/[A-Z]+/g)[0];
-    const startRow = parseInt(cellRange.match(/\d+/g)[0], 10);
-    const statusColumn = String.fromCharCode(startColumn.charCodeAt(0) + 2); // C列
-    const lastUpdateColumn = String.fromCharCode(startColumn.charCodeAt(0) + 3); // D列
+    const sheetIdInt = await getSheetId(sheetId, sheetName); // シートIDを取得
+    const startColumnIndex = cellRange.match(/[A-Z]+/g)[0].charCodeAt(0) - 'A'.charCodeAt(0); // 開始列のインデックスを計算
+    const startRowIndex = parseInt(cellRange.match(/\d+/g)[0], 10) - 1; // 開始行のインデックスを計算
+    const statusColumnIndex = startColumnIndex + 2; // C列のインデックス
+    const lastUpdateColumnIndex = startColumnIndex + 3; // D列のインデックス
 
+    // 有効な結果のみをフィルタリング
     const validResults = results.filter(result => result.status === 'fulfilled' && result.value).map(result => result.value);
     const requests = validResults.map(result => {
         const { index, status, lastUpdate, color, deleteColumns, needsUpdate } = result;
 
-        // A列とB列が空の場合、C列とD列を削除し、色をデフォルトに戻す
-        if (deleteColumns) {
-            return {
-                updateCells: {
-                    range: {
-                        sheetId: sheetIdInt,
-                        startRowIndex: index + startRow - 1,
-                        endRowIndex: index + startRow,
-                        startColumnIndex: statusColumn.charCodeAt(0) - 'A'.charCodeAt(0),
-                        endColumnIndex: lastUpdateColumn.charCodeAt(0) - 'A'.charCodeAt(0) + 1,
-                    },
-                    rows: [
-                        {
-                            values: [
-                                { userEnteredValue: null, userEnteredFormat: { backgroundColor: colorMap['white'] } }, // C列（ステータス）をクリアしてホワイトに設定
-                                { userEnteredValue: null, userEnteredFormat: { backgroundColor: colorMap['white'] } }, // D列（最終更新日時）をクリアしてホワイトに設定
-                            ],
-                        },
-                    ],
-                    fields: 'userEnteredValue,userEnteredFormat.backgroundColor', // 値と色をクリア
-                },
-            };
-        }
+        // 更新範囲を設定
+        const range = {
+            sheetId: sheetIdInt,
+            startRowIndex: index + startRowIndex,
+            endRowIndex: index + startRowIndex + 1,
+            startColumnIndex: statusColumnIndex,
+            endColumnIndex: lastUpdateColumnIndex + 1,
+        };
 
-        // C列とD列が空の場合、新しいステータスと更新日時を設定
-        if (needsUpdate) {
-            return {
-                updateCells: {
-                    range: {
-                        sheetId: sheetIdInt,
-                        startRowIndex: index + startRow - 1,
-                        endRowIndex: index + startRow,
-                        startColumnIndex: statusColumn.charCodeAt(0) - 'A'.charCodeAt(0),
-                        endColumnIndex: lastUpdateColumn.charCodeAt(0) - 'A'.charCodeAt(0) + 1,
-                    },
-                    rows: [
-                        {
-                            values: [
-                                { userEnteredValue: { stringValue: status }, userEnteredFormat: { backgroundColor: colorMap[color] } }, // ステータスと色を設定
-                                { userEnteredValue: { stringValue: lastUpdate }, userEnteredFormat: { backgroundColor: colorMap['white'] } }, // 更新日時は常に白色
-                            ],
-                        },
-                    ],
-                    fields: 'userEnteredValue,userEnteredFormat.backgroundColor',
-                },
-            };
-        }
+        // セルの値とフォーマットを設定
+        const values = deleteColumns ? [
+            { userEnteredValue: null, userEnteredFormat: { backgroundColor: colorMap['white'] } }, // C列（ステータス）をクリアしてホワイトに設定
+            { userEnteredValue: null, userEnteredFormat: { backgroundColor: colorMap['white'] } }, // D列（最終更新日時）をクリアしてホワイトに設定
+        ] : [
+            { userEnteredValue: { stringValue: status }, userEnteredFormat: { backgroundColor: colorMap[color] } }, // ステータスと色を設定
+            { userEnteredValue: { stringValue: lastUpdate }, userEnteredFormat: { backgroundColor: colorMap['white'] } }, // 更新日時は常に白色
+        ];
 
         return {
             updateCells: {
-                range: {
-                    sheetId: sheetIdInt, // 正しいシートIDを使用
-                    startRowIndex: index + startRow - 1,
-                    endRowIndex: index + startRow,
-                    startColumnIndex: statusColumn.charCodeAt(0) - 'A'.charCodeAt(0),
-                    endColumnIndex: lastUpdateColumn.charCodeAt(0) - 'A'.charCodeAt(0) + 1,
-                },
-                rows: [
-                    {
-                        values: [
-                            { userEnteredValue: { stringValue: status }, userEnteredFormat: { backgroundColor: colorMap[color] } }, // ステータスと色を設定
-                            { userEnteredValue: { stringValue: lastUpdate }, userEnteredFormat: { backgroundColor: colorMap['white'] } }, // 更新日時は常に白色
-                        ],
-                    },
-                ],
-                fields: 'userEnteredValue,userEnteredFormat.backgroundColor',
+                range,
+                rows: [{ values }],
+                fields: 'userEnteredValue,userEnteredFormat.backgroundColor', // 更新するフィールドを指定
             },
         };
     });
 
-    if (requests.length > 0) { // リクエストがある場合のみシートを更新
+    // リクエストがある場合のみシートを更新
+    if (requests.length > 0) {
         const request = { spreadsheetId: sheetId, resource: { requests } };
         try {
             const response = await sheets.spreadsheets.batchUpdate(request);

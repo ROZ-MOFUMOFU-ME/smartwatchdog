@@ -1,6 +1,6 @@
 {
   "name": "sheetswatchdog",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Seamlessly monitor and manage server uptime using Google Sheets and AWS Lambda for real-time performance insights.",
   "main": "index.js",
   "scripts": {
@@ -18,7 +18,7 @@
   },
   "homepage": "https://github.com/digitalregion/sheetswatchdog#readme",
   "dependencies": {
-    "@aws-sdk/client-s3": "^3.675.0",
+    "@aws-sdk/client-s3": "^3.679.0",
     "axios": "^1.7.7",
     "googleapis": "^144.0.0"
   }
