@@ -1,43 +1,69 @@
-name: Deploy Node.js project to AWS Lambda Function
+name: CI/CD for AWS Lambda
 
 on:
   push:
-    branches: ["main"]
-
-env:
-  NODE_VERSION: '20.x'
+    branches:
+      - main
+      - dev
 
 jobs:
-  deploy:
+  build-and-test:
+    strategy:
+      matrix:
+        node-version: [18.x, 20.x, 22.x]
     runs-on: ubuntu-latest
     steps:
-    - name: 'Checkout GitHub Action'
-      uses: actions/checkout@v4
-      
-    - name: 'Setup Node ${{ env.NODE_VERSION }} Environment'
-      uses: actions/setup-node@v4
-      with:
-        node-version: ${{ env.NODE_VERSION }}
+      - name: 'Checkout GitHub Action'
+        uses: actions/checkout@v4
 
-    - name: 'Install dependencies'
-      run: npm install
+      - name: 'Setup Node ${{ matrix.node-version }} Environment'
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
 
-    - name: 'Zip project'
-      run: zip -r function.zip . -x .git/\* .github/\* ".env" "LICENSE" ".gitignore" ".env.example" "package-lock.json" "*.md"
+      - name: 'Install dependencies'
+        run: npm install
 
-    - name: 'Configure AWS CLI'
-      uses: aws-actions/configure-aws-credentials@v4
-      with:
-        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-        aws-region: ${{ secrets.AWS_REGION }}
+      - name: 'Run tests'
+        run: npm test
 
-    - name: 'Upload to S3'
-      run: aws s3 cp function.zip s3://sheetswatchdog/function.zip
+      - name: 'Zip project'
+        run: zip -r function.zip . -x .git/\* .github/\* ".env" "LICENSE" ".gitignore" ".env.example" "package-lock.json" "*.md"
 
-    - name: 'Deploy to Lambda'
-      run: |
-        aws lambda update-function-code \
-          --function-name SheetsWatchdog \
-          --s3-bucket sheetswatchdog \
-          --s3-key function.zip
+      - name: 'Upload artifact'
+        uses: actions/upload-artifact@v4
+        with:
+          name: function-zip
+          path: function.zip
+
+  deploy:
+    if: github.ref == 'refs/heads/main'
+    needs: build-and-test
+    runs-on: ubuntu-latest
+    steps:
+      - name: 'Setup Node 18 Environment'
+        uses: actions/setup-node@v4
+        with:
+          node-version: 18
+
+      - name: 'Download artifact'
+        uses: actions/download-artifact@v4
+        with:
+          name: function-zip
+
+      - name: 'Configure AWS CLI'
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      - name: 'Upload to S3'
+        run: aws s3 cp function.zip s3://sheetswatchdog/function.zip
+
+      - name: 'Deploy to Lambda'
+        run: |
+          aws lambda update-function-code \
+            --function-name SheetsWatchdog \
+            --s3-bucket sheetswatchdog \
+            --s3-key function.zip
