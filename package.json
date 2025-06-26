@@ -28,6 +28,7 @@
     "googleapis": "^150.0.1"
   },
   "devDependencies": {
+    "@eslint/js": "^9.29.0",
     "@jest/globals": "^30.0.3",
     "@types/aws-lambda": "^8.10.150",
     "@types/axios": "^0.14.4",
@@ -43,6 +44,7 @@
     "prettier": "^3.6.1",
     "ts-jest": "^29.4.0",
     "ts-node": "^10.9.2",
-    "typescript": "^5.8.3"
+    "typescript": "^5.8.3",
+    "typescript-eslint": "^8.35.0"
   }
 }
