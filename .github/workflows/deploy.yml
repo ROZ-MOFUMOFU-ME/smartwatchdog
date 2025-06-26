@@ -10,7 +10,7 @@ jobs:
   build-and-test:
     strategy:
       matrix:
-        node-version: [18.x, 20.x, 22.x]
+        node-version: [20.x, 22.x]
     runs-on: ubuntu-latest
     steps:
       - name: 'Checkout GitHub Action'
@@ -44,7 +44,7 @@ jobs:
       - name: 'Setup Node 18 Environment'
         uses: actions/setup-node@v4
         with:
-          node-version: 18
+          node-version: 20
 
       - name: 'Download artifact'
         uses: actions/download-artifact@v4
