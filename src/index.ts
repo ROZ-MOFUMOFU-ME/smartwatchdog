@@ -1,441 +1,372 @@
-import https from 'https';
-import { S3Client } from '@aws-sdk/client-s3';
-import type { APIGatewayProxyHandler } from 'aws-lambda';
-import axios from 'axios';
 import { google } from 'googleapis';
-import type {
-  ServerStatus,
-  S3StatusData,
-  SlackStatusData,
-  SlackNotificationType,
-  SheetUpdateResult,
-} from './types';
-import { getCurrentJST } from './utils/date';
-import { writeStatusesToS3, readStatusesFromS3 } from './utils/s3';
+import type { sheets_v4 } from 'googleapis';
+import type { GoogleAuth, OAuth2Client } from 'googleapis-common';
+import type { Env, KVStatusData } from './types';
 import { generateCurrentStatuses } from './utils/status';
 
-const s3Client = new S3Client({ region: process.env.AWS_REGION });
-const SLACK_WEBHOOK_URL = process.env.SLACK_WEBHOOK_URL || '';
-const objectKeyPrefix = 'server_status';
+// KVユーティリティ
+const writeStatusesToKV = async (
+  kv: KVNamespace,
+  key: string,
+  data: KVStatusData
+): Promise<void> => {
+  await kv.put(key, JSON.stringify(data));
+};
 
-// Google Auth client
-const getAuthClient = async () => {
+const readStatusesFromKV = async (
+  kv: KVNamespace,
+  key: string
+): Promise<KVStatusData> => {
+  const value = await kv.get(key);
+  return value ? JSON.parse(value) : { statuses: {} };
+};
+
+// Discord 個別通知
+const sendDiscordNotification = async (
+  webhookUrl: string,
+  spreadsheetId: string,
+  sheetId: number,
+  notificationPayload: {
+    serverName?: string;
+    serverUrl?: string;
+    status: string;
+    lastUpdate: string;
+  },
+  rowNumber: number,
+  mentionRoleId?: string,
+  sheetName?: string
+) => {
+  const { serverName, serverUrl, status, lastUpdate } = notificationPayload;
+  const isError = status.startsWith('ERROR');
+  const mention = mentionRoleId && isError ? `<@&${mentionRoleId}>` : '';
+
+  // Ensure the URL is clickable in Discord by prepending http:// if it's missing a protocol.
+  let displayLinkUrl = serverUrl;
+  if (displayLinkUrl && !/^[a-zA-Z]+:\/\//.test(displayLinkUrl)) {
+    displayLinkUrl = `http://${displayLinkUrl}`;
+  }
+  // Google Sheets行リンク
+  const sheetRowUrl = `https://docs.google.com/spreadsheets/d/${spreadsheetId}/edit#gid=${sheetId}&range=${rowNumber}:${rowNumber}`;
+
+  const embed = {
+    title: isError
+      ? `:rotating_light: Server health check failure - ${sheetName || 'Unknown Sheet'}`
+      : `:white_check_mark: Server Recovered - ${sheetName || 'Unknown Sheet'}`,
+    color: isError ? 0xff0000 : 0x00ff00,
+    description: '',
+    fields: [
+      {
+        name: 'Server Name',
+        value: serverName || 'N/A',
+        inline: true,
+      },
+      {
+        name: 'Server URL',
+        value: displayLinkUrl ? `<${displayLinkUrl}>` : 'N/A',
+        inline: true,
+      },
+      {
+        name: '\u200B',
+        value: '\u200B',
+        inline: true,
+      },
+      {
+        name: 'Status',
+        value: `${isError ? '🔴' : '🟢'} ${status}`,
+        inline: true,
+      },
+      {
+        name: 'Last Updated',
+        value: lastUpdate,
+        inline: true,
+      },
+      {
+        name: '\u200B',
+        value: '\u200B',
+        inline: true,
+      },
+      {
+        name: '\u200B',
+        value: `[📊 View in Google Sheets](${sheetRowUrl})`,
+        inline: false,
+      },
+    ],
+    timestamp: new Date().toISOString(),
+  };
+
+  try {
+    const response = await fetch(webhookUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        content: mention,
+        embeds: [embed],
+      }),
+    });
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.error(
+        `Failed to send Discord notification: ${response.status} - ${errorText}`
+      );
+    } else {
+      console.log('Discord notification sent successfully.');
+      if (
+        response.body &&
+        typeof (response.body as { cancel?: () => void }).cancel === 'function'
+      ) {
+        (response.body as { cancel?: () => void }).cancel?.();
+      }
+    }
+  } catch (error) {
+    console.error('Error sending Discord notification:', error);
+  }
+};
+
+// Google Sheetsデータ取得
+const getSheetData = async (
+  sheetsApi: sheets_v4.Sheets,
+  spreadsheetId: string,
+  range: string
+): Promise<string[][]> => {
+  const res = await sheetsApi.spreadsheets.values.get({
+    spreadsheetId: spreadsheetId,
+    range,
+  });
+  return (res.data.values as string[][]) || [];
+};
+
+// スプレッドシートを一括更新
+const batchUpdateSheet = async (
+  sheetsApi: sheets_v4.Sheets,
+  spreadsheetId: string,
+  requests: sheets_v4.Schema$Request[]
+): Promise<void> => {
+  if (requests.length === 0) {
+    return;
+  }
+  const BATCH_LIMIT = 50;
+  for (let i = 0; i < requests.length; i += BATCH_LIMIT) {
+    const batch = requests.slice(i, i + BATCH_LIMIT);
+    await sheetsApi.spreadsheets.batchUpdate({
+      spreadsheetId: spreadsheetId,
+      requestBody: {
+        requests: batch,
+      },
+    });
+  }
+};
+
+// KVでの状態管理・通知・シート更新
+const handleWatchdog = async (env: Env) => {
+  // Google認証
   const auth = new google.auth.GoogleAuth({
     credentials: {
-      client_email: process.env.GOOGLE_CLIENT_EMAIL,
-      private_key: (process.env.GOOGLE_PRIVATE_KEY || '').replace(/\n/g, '\n'),
+      client_email: env.GOOGLE_CLIENT_EMAIL,
+      private_key: env.GOOGLE_PRIVATE_KEY.replace(/\\n/g, '\n'),
     },
     scopes: ['https://www.googleapis.com/auth/spreadsheets'],
   });
-  return await auth.getClient();
-};
+  google.options({
+    auth: (await auth.getClient()) as unknown as GoogleAuth<OAuth2Client>,
+  });
 
-// Get all sheet names and IDs
-const getAllSheetNamesAndIds = async (
-  sheetId: string,
-  retries = 10,
-  delay = 5000
-): Promise<{ title: string; id: number }[]> => {
   const sheetsApi = google.sheets('v4');
-  try {
-    const response = await sheetsApi.spreadsheets.get({
-      spreadsheetId: sheetId,
-    });
-    return (response.data.sheets || []).map((sheet) => ({
-      title: sheet.properties?.title || '',
-      id: sheet.properties?.sheetId || 0,
-    }));
-  } catch (error) {
-    if (
-      retries > 0 &&
-      typeof error === 'object' &&
-      error !== null &&
-      'code' in error &&
-      (error as { code: number }).code === 429
-    ) {
-      await new Promise((resolve) => setTimeout(resolve, delay));
-      return getAllSheetNamesAndIds(sheetId, retries - 1, delay * 2);
-    } else {
-      throw error;
-    }
-  }
-};
+  const spreadsheetId = env.SPREADSHEET_ID;
 
-// Get sheet ID by name
-const getSheetId = async (
-  sheetId: string,
-  sheetName: string
-): Promise<number> => {
-  const sheets = await getAllSheetNamesAndIds(sheetId);
-  const sheet = sheets.find((s) => s.title === sheetName);
-  if (sheet) return sheet.id;
-  throw new Error(
-    `Sheet with name ${sheetName} not found in spreadsheet ${sheetId}`
-  );
-};
-
-// Get sheet data
-const getSheetData = async (
-  sheetId: string,
-  range: string
-): Promise<string[][]> => {
-  const [sheetName, cellRange] = range.includes('!')
-    ? range.split('!')
-    : [null, range];
-  if (!sheetName || sheetName.trim() === '') {
-    throw new Error('Invalid range: Sheet name is not specified');
-  }
-  const requestRange = `${sheetName}!${cellRange}`;
-  const sheetsApi = google.sheets('v4');
-  const res = await sheetsApi.spreadsheets.values.get({
-    spreadsheetId: sheetId,
-    range: requestRange,
+  // 1. 全シートのメタデータを取得
+  const spreadsheetInfo = await sheetsApi.spreadsheets.get({
+    spreadsheetId,
+    fields: 'sheets(properties(sheetId,title))',
   });
-  return res.data.values as string[][];
-};
-
-// Slack notification
-const sendSlackNotification = async (
-  statusData: SlackStatusData,
-  type: SlackNotificationType | string,
-  sheetName: string | null = null,
-  mentionChannel = false
-) => {
-  const headerText =
-    type === 'error'
-      ? ':rotating_light: Server health check failure'
-      : ':white_check_mark: Server is now alive';
-  const header =
-    sheetName && sheetName !== 'シート1'
-      ? `${headerText} - ${sheetName}`
-      : `${headerText}`;
-  const payload = {
-    blocks: [
-      ...(mentionChannel
-        ? [{ type: 'section', text: { type: 'mrkdwn', text: '@channel' } }]
-        : []),
-      {
-        type: 'header',
-        text: { type: 'plain_text', text: header, emoji: true },
-      },
-      {
-        type: 'section',
-        fields: [
-          {
-            type: 'mrkdwn',
-            text: `*Server Name:*\n${statusData.serverName || 'N/A'}`,
-          },
-          {
-            type: 'mrkdwn',
-            text: `*Server URL:*\n${statusData.serverUrl || 'N/A'}`,
-          },
-        ],
-      },
-      {
-        type: 'section',
-        fields: [
-          {
-            type: 'mrkdwn',
-            text: `*Status:*\n:${type === 'error' ? 'red_circle' : 'large_green_circle'}: ${statusData.status}`,
-          },
-          { type: 'mrkdwn', text: `*Last Updated:*\n${statusData.lastUpdate}` },
-        ],
-      },
-      { type: 'divider' },
-      {
-        type: 'actions',
-        elements: [
-          {
-            type: 'button',
-            text: {
-              type: 'plain_text',
-              text: 'View in Google Sheets',
-              emoji: true,
-            },
-            value: 'view_sheets',
-            url: `${statusData.sheetUrl}`,
-          },
-        ],
-      },
-    ],
-  };
-  const options = {
-    hostname: 'hooks.slack.com',
-    path: `/services/${SLACK_WEBHOOK_URL.split('https://hooks.slack.com/services/')[1]}`,
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'Content-Length': Buffer.byteLength(JSON.stringify(payload)),
-    },
-  };
-  return new Promise<void>((resolve, reject) => {
-    const req = https.request(options, (res) => {
-      res.setEncoding('utf8');
-      res.on('data', () => {});
-      res.on('end', () => resolve());
-    });
-    req.on('error', reject);
-    req.write(JSON.stringify(payload));
-    req.end();
-  });
-};
-
-// Update Google Sheet with status and color
-const updateSheet = async (
-  sheetId: string,
-  range: string,
-  results: PromiseSettledResult<SheetUpdateResult | null>[]
-) => {
-  const colorMap = {
-    red: { red: 0.956, green: 0.8, blue: 0.8 },
-    white: { red: 1, green: 1, blue: 1 },
-  };
-  const [sheetName, cellRange] = range.split('!');
-  const sheetIdInt = await getSheetId(sheetId, sheetName);
-  const startColumnIndex =
-    cellRange.match(/[A-Z]+/g)![0].charCodeAt(0) - 'A'.charCodeAt(0);
-  const startRowIndex = parseInt(cellRange.match(/\d+/g)![0], 10) - 1;
-  const statusColumnIndex = startColumnIndex + 2;
-  const lastUpdateColumnIndex = startColumnIndex + 3;
-  const validResults = results
-    .filter(
-      (result): result is PromiseFulfilledResult<SheetUpdateResult> =>
-        result.status === 'fulfilled' && result.value !== null
-    )
-    .map((result) => result.value);
-  const requests = validResults.map((result) => {
-    const { index, status, lastUpdate, color, deleteColumns } = result;
-    const range = {
-      sheetId: sheetIdInt,
-      startRowIndex: index + startRowIndex,
-      endRowIndex: index + startRowIndex + 1,
-      startColumnIndex: statusColumnIndex,
-      endColumnIndex: lastUpdateColumnIndex + 1,
-    };
-    const values = deleteColumns
-      ? [
-          {
-            userEnteredValue: null,
-            userEnteredFormat: { backgroundColor: colorMap['white'] },
-          },
-          {
-            userEnteredValue: null,
-            userEnteredFormat: { backgroundColor: colorMap['white'] },
-          },
-        ]
-      : [
-          {
-            userEnteredValue: { stringValue: status },
-            userEnteredFormat: { backgroundColor: colorMap[color ?? 'white'] },
-          },
-          {
-            userEnteredValue: { stringValue: lastUpdate },
-            userEnteredFormat: { backgroundColor: colorMap['white'] },
-          },
-        ];
-    return {
-      updateCells: {
-        range,
-        rows: [{ values }],
-        fields: 'userEnteredValue,userEnteredFormat.backgroundColor',
-      },
-    };
-  });
-  if (requests.length > 0) {
-    const sheetsApi = google.sheets('v4');
-    const request = { spreadsheetId: sheetId, resource: { requests } };
-    await sheetsApi.spreadsheets.batchUpdate(request);
-  }
-};
-
-// Check server status and notify Slack
-const checkServerStatus = async (
-  row: string[],
-  index: number,
-  sheetId: string,
-  sheetName: string,
-  previousStatuses: Record<string, ServerStatus>,
-  currentStatuses: Record<string, ServerStatus>
-): Promise<SheetUpdateResult | null> => {
-  let serverName = row[0];
-  const serverUrl = row[1];
-  const sheetIdInt = await getSheetId(sheetId, sheetName);
-  const sheetUrl = `https://docs.google.com/spreadsheets/d/${sheetId}/edit#gid=${sheetIdInt}&range=${index + 2}:${index + 2}`;
-  if (!serverName && !serverUrl) {
-    return { index, deleteColumns: true, needsUpdate: true };
-  }
-  if (!serverUrl || serverUrl.trim() === '') return null;
-  if (!serverName) serverName = serverUrl;
-  const previousStatus = previousStatuses[serverName]?.status || null;
-  let newStatus = '';
-  let notificationType: SlackNotificationType | '' = '';
-  let mentionChannel = false;
-  try {
-    const response = await axios.get(serverUrl, { timeout: 5000 });
-    newStatus = `OK Status:${response.status}`;
-  } catch (error) {
-    const err = error as {
-      code?: string;
-      response?: { status?: number };
-      message?: string;
-    };
-    newStatus =
-      err.code === 'ENOTFOUND'
-        ? 'ERROR! Server not reachable'
-        : `ERROR! ${err.response ? `Status:${err.response.status}` : err.message}`;
-  }
-  if (previousStatus === newStatus) return null;
-  currentStatuses[serverName] = {
-    status: newStatus,
-    lastUpdate: getCurrentJST(),
-  };
-  if (newStatus.startsWith('ERROR')) {
-    notificationType = 'error';
-    mentionChannel = !previousStatus || !previousStatus.startsWith('ERROR');
-  } else if (newStatus.startsWith('OK')) {
-    notificationType = 'recovery';
-  }
-  await sendSlackNotification(
-    {
-      serverName,
-      serverUrl,
-      status: newStatus,
-      lastUpdate: getCurrentJST(),
-      sheetUrl,
-    },
-    notificationType,
-    sheetName,
-    mentionChannel
-  );
-  const needsUpdate = !previousStatus || newStatus.startsWith('ERROR');
-  return {
-    index,
-    serverName,
-    serverUrl,
-    status: newStatus,
-    color: newStatus.startsWith('OK') ? 'white' : 'red',
-    lastUpdate: getCurrentJST(),
-    needsUpdate,
-  };
-};
-
-// Main Lambda handler
-export const handler: APIGatewayProxyHandler = async () => {
-  try {
-    const authClient = await getAuthClient();
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    google.options({ auth: authClient as any });
-    const sheetId = process.env.SPREADSHEET_ID!;
-    const range = process.env.RANGE!;
-    await processSheets(sheetId, range);
-    return {
-      statusCode: 200,
-      body: JSON.stringify({ message: 'Server health check complete.' }),
-    };
-  } catch (error) {
-    await sendSlackNotification(
-      { status: `An error occurred: ${(error as Error).message}` },
-      'error'
-    );
-    return {
-      statusCode: 500,
-      body: JSON.stringify({
-        message: 'An error occurred.',
-        error: (error as Error).message,
-      }),
-    };
-  }
-};
-
-// Export functions for testing
-export { sendSlackNotification, updateSheet, google };
-
-// Process all sheets
-const processSheets = async (sheetId: string, range: string) => {
-  const allSheetNames = await getAllSheetNamesAndIds(sheetId);
-  const [sheetNameInRange, cellRange] = range.includes('!')
-    ? range.split('!')
-    : [null, range];
-  if (sheetNameInRange) {
-    await processSingleSheet(sheetId, range, sheetNameInRange);
-  } else {
-    for (const sheet of allSheetNames) {
-      const fullRange = `${sheet.title}!${cellRange}`;
-      await processSingleSheet(sheetId, fullRange, sheet.title);
-    }
-  }
-};
-
-// Process a single sheet
-const processSingleSheet = async (
-  sheetId: string,
-  range: string,
-  sheetName: string
-) => {
-  const rows = await getSheetData(sheetId, range);
-  if (!rows || !rows.length) return;
-  const fileName = `${objectKeyPrefix}_${sheetName}.json`;
-  const previousData = await readStatusesFromS3(
-    s3Client,
-    fileName,
-    process.env.S3_BUCKET_NAME!
-  );
-  const previousStatuses: Record<string, ServerStatus> =
-    (previousData as S3StatusData).statuses || {};
-  const previousSheetUrl: string =
-    (previousData as S3StatusData).sheetUrl || '';
-  const { currentStatuses, removedStatuses } =
-    await generateCurrentStatuses(rows);
-  const previousKeys = Object.keys(previousStatuses);
-  const currentKeys = Object.keys(currentStatuses);
-  previousKeys.forEach((key) => {
-    if (!currentKeys.includes(key)) {
-      removedStatuses[key] = true;
-    }
-  });
-  for (const key in removedStatuses) {
-    if (previousStatuses[key]) {
-      delete previousStatuses[key];
-    }
-  }
-  const checks = rows.map((row, index) =>
-    checkServerStatus(
-      row,
-      index,
-      sheetId,
-      sheetName,
-      previousStatuses,
-      currentStatuses
-    )
-  );
-  const results = await Promise.allSettled(checks);
-  const sheetUrl = `https://docs.google.com/spreadsheets/d/${sheetId}/edit#gid=${await getSheetId(sheetId, sheetName)}`;
-  const hasChanges =
-    Object.keys(currentStatuses).some((key) => {
-      return (
-        !previousStatuses[key] ||
-        JSON.stringify(previousStatuses[key]) !==
-          JSON.stringify(currentStatuses[key])
-      );
-    }) ||
-    Object.keys(removedStatuses).length > 0 ||
-    previousSheetUrl !== sheetUrl;
   if (
-    hasChanges ||
-    results.some(
-      (result) =>
-        result.status === 'fulfilled' &&
-        result.value &&
-        result.value.deleteColumns
-    )
+    !spreadsheetInfo.data.sheets ||
+    spreadsheetInfo.data.sheets.length === 0
   ) {
-    await writeStatusesToS3(
-      s3Client,
-      { ...previousStatuses, ...currentStatuses },
-      fileName,
-      sheetUrl,
-      process.env.S3_BUCKET_NAME!
-    );
-    await updateSheet(sheetId, range, results);
+    console.log('No sheets found in spreadsheet.');
+    return;
   }
+
+  // 2. 処理するシートを決定するためのカーソルをKVから読み込む
+  const rangePattern = 'A2:D'; // env.RANGE.split('!')[1] || 'A2:D';
+  const sheetMetas = spreadsheetInfo.data.sheets
+    .filter(
+      (s) =>
+        s.properties?.sheetId !== null &&
+        s.properties?.sheetId !== undefined &&
+        s.properties?.title
+    )
+    .map((s) => ({
+      sheetId: s.properties!.sheetId!,
+      title: s.properties!.title!,
+      range: `${s.properties!.title}!${rangePattern}`,
+      kvKey: `${spreadsheetId}-${s.properties!.sheetId!}`,
+    }));
+
+  const cursorStr = await env.STATUS_KV.get('SHEETS_WATCHDOG_CURSOR');
+  let cursor = cursorStr ? parseInt(cursorStr, 10) : 0;
+  if (cursor >= sheetMetas.length) {
+    cursor = 0;
+  }
+
+  const sheetToProcess = sheetMetas[cursor];
+
+  // 3. 選択されたシートのデータを取得
+  const rows = await getSheetData(
+    sheetsApi,
+    spreadsheetId,
+    sheetToProcess.range
+  );
+  const prevData = await readStatusesFromKV(
+    env.STATUS_KV,
+    sheetToProcess.kvKey
+  );
+
+  // --- 空行削除フェーズ ---
+  const startRow = (rangePattern.match(/^([A-Z]+)(\d+)/) || [])[2];
+  const startRowIndex = startRow ? parseInt(startRow, 10) - 1 : 1;
+  const emptyRowDeleteRequests: sheets_v4.Schema$Request[] = [];
+  for (let i = rows.length - 1; i >= 0; i--) {
+    const [serverName, serverUrl] = rows[i];
+    if (!serverName && !serverUrl) {
+      emptyRowDeleteRequests.push({
+        deleteDimension: {
+          range: {
+            sheetId: sheetToProcess.sheetId,
+            dimension: 'ROWS',
+            startIndex: startRowIndex + i,
+            endIndex: startRowIndex + i + 1,
+          },
+        },
+      });
+    }
+  }
+  if (emptyRowDeleteRequests.length > 0) {
+    await batchUpdateSheet(sheetsApi, spreadsheetId, emptyRowDeleteRequests);
+    // To ensure row deletion is fully reflected, skip further processing this run.
+    // The next scheduled run will operate on the updated sheet.
+    return;
+  }
+
+  // --- 通常の監視・通知・シート更新フェーズ ---
+  if (rows.length > 0) {
+    const prevStatuses = prevData?.statuses || {};
+    const { currentStatuses } = await generateCurrentStatuses(rows);
+
+    const updateRequests: sheets_v4.Schema$Request[] = [];
+    const notificationPromises: Promise<void>[] = [];
+    // startRow, startRowIndexは上で定義済み
+
+    rows.forEach((row, index) => {
+      const [serverName, serverUrl] = row;
+      const key = serverName || serverUrl;
+      const currentStatus = currentStatuses[key];
+      const prevStatus = prevStatuses[key];
+
+      // 空行は既に削除済みなのでスキップ
+      if (!serverName && !serverUrl) {
+        return;
+      }
+      // Server NameはあるがServer URLが空の場合は何もしない
+      if (serverName && !serverUrl) {
+        return;
+      }
+      if (
+        currentStatus &&
+        (!prevStatus || prevStatus.status !== currentStatus.status)
+      ) {
+        const isError = currentStatus.status.startsWith('ERROR');
+        const rowNumber = startRowIndex + index + 1;
+        updateRequests.push({
+          updateCells: {
+            rows: [
+              {
+                values: [
+                  {
+                    userEnteredValue: { stringValue: currentStatus.status },
+                    userEnteredFormat: {
+                      backgroundColor: isError
+                        ? { red: 1, green: 0.8, blue: 0.8 }
+                        : { red: 1, green: 1, blue: 1 },
+                    },
+                  },
+                  {
+                    userEnteredValue: { stringValue: currentStatus.lastUpdate },
+                    userEnteredFormat: {
+                      backgroundColor: isError
+                        ? { red: 1, green: 0.8, blue: 0.8 }
+                        : { red: 1, green: 1, blue: 1 },
+                    },
+                  },
+                ],
+              },
+            ],
+            fields: 'userEnteredValue,userEnteredFormat.backgroundColor',
+            range: {
+              sheetId: sheetToProcess.sheetId,
+              startRowIndex: startRowIndex + index,
+              endRowIndex: startRowIndex + index + 1,
+              startColumnIndex: 2,
+              endColumnIndex: 4, // C:D
+            },
+          },
+        });
+        const notificationPayload = {
+          serverName: key,
+          serverUrl,
+          status: currentStatus.status,
+          lastUpdate: currentStatus.lastUpdate,
+        };
+        notificationPromises.push(
+          sendDiscordNotification(
+            env.DISCORD_WEBHOOK_URL,
+            spreadsheetId,
+            sheetToProcess.sheetId,
+            notificationPayload,
+            rowNumber,
+            env.DISCORD_MENTION_ROLE_ID,
+            sheetToProcess.title
+          )
+        );
+      }
+    });
+
+    await Promise.all(notificationPromises);
+    if (updateRequests.length > 0) {
+      await batchUpdateSheet(sheetsApi, spreadsheetId, updateRequests);
+    }
+    await writeStatusesToKV(env.STATUS_KV, sheetToProcess.kvKey, {
+      statuses: currentStatuses,
+    });
+  }
+
+  // 6. 次に処理するシートのカーソルを更新
+  const nextCursor = (cursor + 1) % sheetMetas.length;
+  await env.STATUS_KV.put('SHEETS_WATCHDOG_CURSOR', nextCursor.toString());
+};
+
+// Cloudflare Workersエントリポイント
+export default {
+  async fetch(request: Request, env: Env): Promise<Response> {
+    try {
+      await handleWatchdog(env);
+      return new Response(
+        JSON.stringify({ message: 'Server health check complete.' }),
+        { status: 200 }
+      );
+    } catch (error) {
+      console.error(error);
+      const rayId = request.headers.get('cf-ray');
+      const errorMessage = `An error occurred. Ray ID: ${rayId}. Error: ${(error as Error).message}`;
+      return new Response(JSON.stringify({ error: errorMessage }), {
+        status: 500,
+      });
+    }
+  },
+  async scheduled(controller: ScheduledController, env: Env) {
+    try {
+      await handleWatchdog(env);
+    } catch (error) {
+      console.error(`Scheduled task failed: ${(error as Error).stack}`);
+    }
+  },
 };

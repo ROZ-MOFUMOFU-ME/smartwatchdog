@@ -5,6 +5,9 @@ import pluginPrettier from 'eslint-plugin-prettier';
 import pluginImport from 'eslint-plugin-import';
 
 export default [
+  {
+    ignores: ['dist/**'],
+  },
   js.configs.recommended,
   ...tseslint.configs.recommended,
   prettier,

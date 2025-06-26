@@ -1,13 +1,14 @@
-# SheetsWatchdog 🐕
+# SmartWatchdog 🐕
 
-[![Lint/Format](https://github.com/digitalregion/sheetswatchdog/actions/workflows/lint-format.yml/badge.svg)](https://github.com/digitalregion/sheetswatchdog/actions/workflows/lint-format.yml)
-[![Deploy](https://github.com/digitalregion/sheetswatchdog/actions/workflows/deploy.yml/badge.svg)](https://github.com/digitalregion/sheetswatchdog/actions/workflows/deploy.yml)
+[![Lint/Format](https://github.com/ROZ-MOFUMOFU-ME/smartwatchdog/actions/workflows/lint-format.yml/badge.svg)](https://github.com/ROZ-MOFUMOFU-ME/smartwatchdog/actions/workflows/lint-format.yml)
+[![Deploy](https://github.com/ROZ-MOFUMOFU-ME/smartwatchdog/actions/workflows/deploy.yml/badge.svg)](https://github.com/ROZ-MOFUMOFU-ME/smartwatchdog/actions/workflows/deploy.yml)
 [![Coverage Status](https://img.shields.io/badge/coverage-auto--generated-brightgreen)](./coverage/lcov-report/index.html)
-[![TypeScript](https://img.shields.io/badge/TypeScript-5.8.3-blue.svg)](https://www.typescriptlang.org/)
-[![Node.js](https://img.shields.io/badge/Node.js-18.x-green.svg)](https://nodejs.org/)
+[![TypeScript](https://img.shields.io/badge/TypeScript-007ACC?style=flat&logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
+[![Node.js](https://img.shields.io/badge/Node.js-22-green.svg)](https://nodejs.org/)
+[![Cloudflare Workers](https://img.shields.io/badge/Cloudflare-Workers-F38020?style=flat&logo=cloudflare&logoColor=white)](https://workers.cloudflare.com/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-> **Googleスプレッドシート**と**AWS Lambda**を使用したサーバーレスなサーバー死活監視ツール
+> **Googleスプレッドシート**と**Cloudflare Workers**を使用したサーバーレスなサーバー死活監視ツール
 
 ## 📋 目次
 
@@ -26,20 +27,21 @@
 
 ## 🎯 概要
 
-SheetsWatchdogは、Googleスプレッドシートを管理画面として使用し、AWS Lambdaでサーバーの死活監視を行うサーバーレスな監視ツールです。
+SmartWatchdogは、Googleスプレッドシートを管理画面として使用し、Cloudflare Workersでサーバーの死活監視を行うサーバーレスな監視ツールです。通知はDiscord Webhookで行います。
 
 ### 特徴
 - **🔄 自動監視**: 設定した間隔でサーバーの状態を自動チェック
 - **📊 スプレッドシート管理**: 直感的なGoogleスプレッドシートでの監視対象管理
-- **🔔 Slack通知**: 状態変化をリアルタイムでSlackに通知
+- **🔔 Discord通知**: 状態変化をリアルタイムでDiscordに通知
 - **🎨 視覚的フィードバック**: スプレッドシートの色分けで状態を一目で確認
-- **💾 状態保持**: S3での状態履歴管理
-- **🚀 サーバーレス**: AWS Lambdaによる自動スケーリング
+- **💾 状態保持**: KVでの状態履歴管理
+- **🚀 サーバーレス**: Cloudflare Workersによる自動スケーリング
 
 ## ✨ 主な機能
 
 ### 1. サーバー監視
 - HTTP/HTTPSエンドポイントの死活監視
+- TCPポート監視（Cloudflare Sockets API対応）
 - カスタマイズ可能なタイムアウト設定（デフォルト: 5秒）
 - 詳細なエラー情報の取得
 
@@ -48,125 +50,83 @@ SheetsWatchdogは、Googleスプレッドシートを管理画面として使用
 - 自動的な状態更新と色分け
 - 削除されたサーバーの自動クリーンアップ
 
-### 3. Slack通知
+### 3. Discord通知
 - エラー発生時の即座通知
 - 復旧時の通知
-- @channelメンション機能
+- @everyone/@roleメンションや埋め込み通知
 - スプレッドシートへの直接リンク
 
 ### 4. 状態管理
-- S3での状態履歴保存
+- KVでの状態履歴保存
 - 変更検知による効率的な更新
 - 複数シートの独立した状態管理
 
 ## 🏗️ アーキテクチャ
 
 ```
-┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
-│   Google Sheets │    │   AWS Lambda    │    │      Slack      │
-│                 │    │                 │    │                 │
-│ 監視対象管理     │◄──►│ サーバー監視     │───►│ 通知送信        │
-│ 状態表示        │    │ 状態更新        │    │                 │
-└─────────────────┘    └─────────────────┘    └─────────────────┘
-                              │
-                              ▼
-                       ┌─────────────────┐
-                       │   Amazon S3     │
-                       │                 │
-                       │ 状態履歴保存     │
-                       └─────────────────┘
+┌─────────────────┐    ┌────────────────────────┐    ┌─────────────────┐
+│   Google Sheets │    │ Cloudflare Workers     │    │     Discord     │
+│                 │    │                        │    │                 │
+│ 監視対象管理     │◄──►│ サーバー監視            │───►│ 通知送信         │
+│ 状態表示         │    │ 状態更新・KV保存        │    │                 │
+└─────────────────┘    └────────────────────────┘    └─────────────────┘
 ```
 
 ## 🛠️ 技術スタック
 
-### バックエンド
-- **TypeScript** - 型安全な開発
-- **Node.js** - ランタイム環境
-- **AWS Lambda** - サーバーレス実行環境
-- **Amazon S3** - 状態データ保存
-
-### 外部API
-- **Google Sheets API** - スプレッドシート操作
-- **Slack Webhook API** - 通知送信
-- **Axios** - HTTP通信
-
-### 開発ツール
-- **Jest** - ユニットテスト
-- **ESLint** - コード品質管理
-- **Prettier** - コード整形
-- **GitHub Actions** - CI/CD
+- **TypeScript**
+- **Cloudflare Workers**
+- **Google Sheets API**
+- **Discord Webhook API**
+- **Cloudflare KV**
+- **Jest / ESLint / Prettier / GitHub Actions**
 
 ## 🚀 セットアップ
 
 ### 前提条件
-- Node.js 18.x 以上
+- Node.js 22.x 以上
 - npm 9.x 以上
-- AWS アカウント
 - Google Cloud Platform アカウント
-- Slack ワークスペース
+- Discordサーバー管理権限
+- Cloudflareアカウント
 
 ### 1. リポジトリのクローン
 ```bash
-git clone https://github.com/digitalregion/sheetswatchdog.git
-cd sheetswatchdog
+git clone https://github.com/ROZ-MOFUMOFU-ME/smartwatchdog.git
+cd smartwatchdog
 npm install
 ```
 
 ### 2. Google Cloud Platform の設定
+（Google Sheets APIの有効化・サービスアカウント作成・シート共有は従来通り）
 
-#### 2.1 Google Sheets API の有効化
-1. [Google Cloud Console](https://console.cloud.google.com/) にアクセス
-2. プロジェクトを作成または選択
-3. **APIとサービス** → **ライブラリ** で「Google Sheets API」を検索して有効化
+### 3. Discord Webhook の設定
+1. Discordサーバーのチャンネル設定→「連携サービス」→「ウェブフック」→「新しいウェブフック」作成
+2. Webhook URLをコピー
 
-#### 2.2 サービスアカウントの作成
-1. **APIとサービス** → **認証情報** に移動
-2. **認証情報を作成** → **サービスアカウント** を選択
-3. サービスアカウント名を入力して作成
-4. **キーを作成** → **JSON** を選択してダウンロード
-
-#### 2.3 スプレッドシートの設定
-1. Googleスプレッドシートを新規作成
-2. サービスアカウントのメールアドレスに編集権限を付与
-3. スプレッドシートIDをコピー（URLから取得）
-
-### 3. Slack Webhook の設定
-1. Slackワークスペースにログイン
-2. 通知を受け取りたいチャンネルで **「アプリの追加」** をクリック
-3. **「Incoming Webhooks」** を検索して追加
-4. Webhook URLをコピー
-
-### 4. AWS の設定
-
-#### 4.1 S3バケットの作成
-```bash
-aws s3 mb s3://your-bucket-name
+### 4. Cloudflare Workers/KVの設定
+1. [Cloudflare Workers](https://developers.cloudflare.com/workers/)で新規プロジェクト作成
+2. KV Namespaceを作成し、`wrangler.toml`にバインド
+3. wrangler.toml例:
+```toml
+name = "smartwatchdog-worker"
+main = "src/index.ts"
+compatibility_date = "2024-06-20"
+kv_namespaces = [
+  { binding = "STATUS_KV", id = "xxxxxx" }
+]
+[vars]
+GOOGLE_CLIENT_EMAIL = "xxx"
+GOOGLE_PRIVATE_KEY = "xxx"
+SPREADSHEET_ID = "xxx"
+DISCORD_WEBHOOK_URL = "https://discord.com/api/webhooks/xxx/yyy"
+# Optional: ID for role to mention on error
+# DISCORD_MENTION_ROLE_ID = "123456789012345678"
 ```
-
-#### 4.2 Lambda関数の作成
-1. AWS Lambdaコンソールにアクセス
-2. **関数の作成** → **一から作成** を選択
-3. 関数名: `SheetsWatchdog`
-4. ランタイム: `Node.js 18.x`
-5. **関数の作成** をクリック
-
-#### 4.3 環境変数の設定
-Lambda関数の設定画面で以下の環境変数を追加：
-
-| 変数名 | 説明 | 例 |
-|--------|------|-----|
-| `GOOGLE_CLIENT_EMAIL` | サービスアカウントのメールアドレス | `service@project.iam.gserviceaccount.com` |
-| `GOOGLE_PRIVATE_KEY` | サービスアカウントの秘密鍵 | `-----BEGIN PRIVATE KEY-----\n...` |
-| `SPREADSHEET_ID` | スプレッドシートID | `1A2B3C4D5E6F7G8H9I0J` |
-| `RANGE` | データ範囲 | `A2:D` または `シート1!A2:D` |
-| `SLACK_WEBHOOK_URL` | Slack Webhook URL | `https://hooks.slack.com/services/...` |
-| `S3_BUCKET_NAME` | S3バケット名 | `your-bucket-name` |
-| `AWS_REGION` | AWSリージョン | `ap-northeast-1` |
 
 ### 5. デプロイ
 ```bash
-npm run build
-# 生成されたdist/index.jsをLambdaにアップロード
+npx wrangler publish
 ```
 
 ## 📖 使用方法
@@ -183,20 +143,19 @@ npm run build
 - **A列**: サーバー名（任意、空の場合はURLが使用される）
 - **B列**: サーバーURL（必須、HTTP/HTTPS）
 - **C列**: ステータス（自動更新）
-  - `OK Status:200` - 正常
-  - `ERROR! Status:404` - エラー
-  - `ERROR! Server not reachable` - 到達不能
+  - `OK: Status 200` - 正常
+  - `ERROR: Status 404` - エラー
+  - `ERROR: Server not reachable` - 到達不能
 - **D列**: 最終更新日時（自動更新）
 
 ### 2. 監視の開始
-1. スプレッドシートに監視対象サーバーを入力
-2. AWS EventBridgeでスケジュールを設定
-3. 自動監視が開始される
+- Cloudflare Workersのスケジューラや外部トリガーで定期実行
+- Discordに通知が届くことを確認
 
-### 3. 通知の確認
-- **エラー発生時**: 赤いアイコンと@channelメンション
-- **復旧時**: 緑のアイコンで通知
-- **通知内容**: サーバー名、URL、ステータス、更新日時、スプレッドシートリンク
+### 3. 通知の例
+- **エラー発生時**: 赤色embed＋:rotating_light:＋@mention
+- **復旧時**: 緑色embed＋:white_check_mark:
+- **内容**: サーバー名、URL、ステータス、更新日時、スプレッドシートリンク
 
 ## 🛠️ 開発
 
@@ -231,9 +190,7 @@ src/
 ├── types.ts              # TypeScript型定義
 └── utils/                # ユーティリティ関数
     ├── date.ts           # 日時処理
-    ├── s3.ts             # S3操作
-    ├── status.ts         # ステータス処理
-    └── stream.ts         # ストリーム処理
+    └── status.ts         # ステータス処理
 ```
 
 ## 🧪 テスト
@@ -252,8 +209,8 @@ npm test -- src/utils/status.test.ts
 
 ### テストカバレッジ
 - **ユニットテスト**: 各ユーティリティ関数のテスト
-- **統合テスト**: Slack通知、S3操作のテスト
-- **モック**: 外部APIのモック化
+- **統合テスト**: Discord通知、KV操作のテスト
+- **モック**: 外部API（Google Sheets/Discord/KV）のモック化
 
 ### テストファイル構成
 ```
@@ -261,12 +218,12 @@ src/
 ├── index.test.ts         # メイン機能のテスト
 └── utils/
     ├── date.test.ts      # 日時処理のテスト
-    ├── s3.test.ts        # S3操作のテスト
-    ├── status.test.ts    # ステータス処理のテスト
-    └── stream.test.ts    # ストリーム処理のテスト
+    └── status.test.ts    # ステータス処理のテスト
 ```
 
 ## 🔄 CI/CD
+- GitHub ActionsでLint/Format/Test自動化
+- wrangler publishで自動デプロイも可能
 
 ### GitHub Actions ワークフロー
 
@@ -281,8 +238,7 @@ src/
 - **トリガー**: push to main/dev
 - **処理**:
   - 複数Node.jsバージョンでのテスト
-  - AWS Lambdaへの自動デプロイ
-  - S3へのアーティファクト保存
+  - Cloudflare Workersへの自動デプロイ
 
 ### バッジ
 - **Lint/Format**: コード品質の状態
@@ -290,6 +246,9 @@ src/
 - **Coverage**: テストカバレッジ
 
 ## 🔧 トラブルシューティング
+- Google Sheets API認証エラー→サービスアカウント/シート共有/秘密鍵改行に注意
+- Discord通知が来ない→Webhook URL/権限/レート制限を確認
+- KV Namespace未設定→wrangler.tomlとCloudflareダッシュボードで確認
 
 ### よくある問題
 
@@ -297,32 +256,29 @@ src/
 ```
 Error: Invalid range: Sheet name is not specified
 ```
-**解決方法**: `RANGE`環境変数にシート名を含める（例: `シート1!A2:D`）
+**解決方法**: シート名や範囲指定が正しいか確認（例: `シート1!A2:D`）
 
-#### 2. Slack通知が送信されない
+#### 2. Discord通知が送信されない
 **確認項目**:
 - Webhook URLが正しいか
-- チャンネルにIncoming Webhooksが追加されているか
-- ネットワーク接続が正常か
+- Discordチャンネルの権限が正しいか
+- レートリミットに達していないか
 
-#### 3. S3アクセスエラー
+#### 3. KV Namespace未設定
 ```
-AccessDenied: Access Denied
+Error: KV namespace not bound
 ```
-**解決方法**: Lambda実行ロールにS3アクセス権限を追加
-
-#### 4. タイムアウトエラー
-**対処法**:
-- サーバーの応答時間を確認
-- タイムアウト設定を調整（コード内で5秒に設定）
+**解決方法**: `wrangler.toml`とCloudflareダッシュボードでKVバインドを確認
 
 ### ログの確認
 ```bash
-# CloudWatchログの確認
-aws logs tail /aws/lambda/SheetsWatchdog --follow
+# Cloudflare Workersのログ確認
+npx wrangler tail
 ```
 
 ## 🤝 貢献
+- フォーク＆PR歓迎
+- TypeScript/ESLint/Prettier/Jestルール遵守
 
 ### 貢献の流れ
 1. このリポジトリをフォーク
@@ -350,16 +306,12 @@ aws logs tail /aws/lambda/SheetsWatchdog --follow
 ## 🙏 謝辞
 
 - [Google Sheets API](https://developers.google.com/sheets/api) - スプレッドシート操作
-- [AWS Lambda](https://aws.amazon.com/lambda/) - サーバーレス実行環境
-- [Slack API](https://api.slack.com/) - 通知機能
+- [Cloudflare Workers](https://developers.cloudflare.com/workers/) - サーバーレス実行環境
+- [Discord Webhook API](https://discord.com/developers/docs/resources/webhook) - 通知機能
 - [TypeScript](https://www.typescriptlang.org/) - 型安全な開発
 
 ## 📞 サポート
 
-- **Issues**: [GitHub Issues](https://github.com/digitalregion/sheetswatchdog/issues)
+- **Issues**: [GitHub Issues](https://github.com/ROZ-MOFUMOFU-ME/smartwatchdog/issues)
 - **Documentation**: [詳細手順書](https://digital-region.docbase.io/posts/3529871)
 - **Email**: プロジェクトメンテナーまで
-
----
-
-**Made with ❤️ by [Digital Region](https://github.com/digitalregion)**

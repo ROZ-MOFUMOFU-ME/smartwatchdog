@@ -140,3 +140,7 @@ secret.json
 
 # test files
 test
+
+# wrangler
+.wrangler
+wrangler.toml

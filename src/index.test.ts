@@ -1,160 +1,112 @@
-import https from 'https';
-import type { sheets_v4 } from 'googleapis';
-import type { SheetUpdateResult } from './types';
-import * as index from './index';
+import type { Env } from './types';
+import handler from './index';
 
-type Sheets = sheets_v4.Sheets;
+let originalLog: typeof console.log;
+let originalError: typeof console.error;
 
-type ReqMock = {
-  on: jest.Mock;
-  write: jest.Mock;
-  end: jest.Mock;
-};
-
-jest.mock('https');
-
-// sendSlackNotificationのテスト
-describe('sendSlackNotification', () => {
-  it('Slack通知が正常に送信される', async () => {
-    const reqMock: ReqMock = {
-      on: jest.fn(),
-      write: jest.fn(),
-      end: jest.fn(),
-    };
-    (https.request as jest.Mock).mockImplementation(
-      (
-        _opts: unknown,
-        cb: (res: {
-          setEncoding: jest.Mock;
-          on: (ev: string, cb2: () => void) => void;
-        }) => void
-      ) => {
-        cb({
-          setEncoding: jest.fn(),
-          on: (ev: string, cb2: () => void) => {
-            if (ev === 'end') cb2();
-          },
-        });
-        return reqMock;
-      }
-    );
-    await expect(
-      index.sendSlackNotification({ status: 'OK' }, 'recovery')
-    ).resolves.toBeUndefined();
-    expect(reqMock.write).toHaveBeenCalled();
-    expect(reqMock.end).toHaveBeenCalled();
-  });
-
-  it('Slack通知でエラー時はrejectされる', async () => {
-    const reqMock: ReqMock & { on: jest.Mock } = {
-      on: jest.fn((event: string, handler: (error: Error) => void) => {
-        if (event === 'error') {
-          setImmediate(() => handler(new Error('fail')));
-        }
-        return reqMock;
-      }),
-      write: jest.fn(),
-      end: jest.fn(),
-    };
-    (https.request as jest.Mock).mockImplementation(() => reqMock);
-    await expect(
-      index.sendSlackNotification({ status: 'NG' }, 'error')
-    ).rejects.toBeDefined();
-  });
+beforeAll(() => {
+  originalLog = console.log;
+  originalError = console.error;
+  jest.spyOn(console, 'log').mockImplementation(() => {});
+  jest.spyOn(console, 'error').mockImplementation(() => {});
+});
+afterAll(() => {
+  console.log = originalLog;
+  console.error = originalError;
 });
 
-// updateSheetのテスト雛形
-describe('updateSheet', () => {
-  function createSheetsApiMock(
-    batchUpdateMock: jest.Mock,
-    getMock: jest.Mock
-  ): Sheets {
-    // 必要なプロパティをundefinedで埋める
-    return {
-      spreadsheets: {
-        batchUpdate: batchUpdateMock,
-        get: getMock,
-        context: undefined,
-        developerMetadata: undefined,
-        sheets: undefined,
-        values: undefined,
-      } as unknown as sheets_v4.Resource$Spreadsheets,
-    } as Sheets;
-  }
+// グローバルfetch, googleapis, KVNamespaceをモック
+const mockPut = jest.fn();
+const mockGet = jest.fn();
+const mockSheetsGet = jest.fn();
+const mockSheetsValuesGet = jest.fn();
+const mockSheetsBatchUpdate = jest.fn();
+// body.cancel()を呼ばれてもエラーにならないようにReadableStreamを渡す
+const mockBody = new ReadableStream() as unknown as { cancel: jest.Mock };
+mockBody.cancel = jest.fn();
+const mockDiscordFetch = jest.fn(() =>
+  Promise.resolve(new Response(null, { status: 204 }))
+);
 
-  it('Google Sheets APIが呼ばれる', async () => {
-    const batchUpdateMock = jest.fn().mockResolvedValue({});
-    const getMock = jest.fn().mockResolvedValue({
-      data: { sheets: [{ properties: { title: 'Sheet1', sheetId: 0 } }] },
-    });
-    const sheetsApiMock = createSheetsApiMock(batchUpdateMock, getMock);
-    jest.spyOn(index.google, 'sheets').mockReturnValue(sheetsApiMock);
-
-    const mockResults: PromiseFulfilledResult<SheetUpdateResult>[] = [
-      {
-        status: 'fulfilled',
-        value: {
-          index: 0,
-          status: 'OK',
-          lastUpdate: '2024-01-01',
-          color: 'white',
-        },
+jest.mock('googleapis', () => {
+  const sheets = () => ({
+    spreadsheets: {
+      get: mockSheetsGet,
+      values: { get: mockSheetsValuesGet },
+      batchUpdate: mockSheetsBatchUpdate,
+    },
+  });
+  return {
+    google: {
+      sheets,
+      auth: {
+        GoogleAuth: jest.fn().mockImplementation(() => ({
+          getClient: () => ({}),
+        })),
       },
-    ];
+      options: jest.fn(),
+    },
+  };
+});
 
-    await expect(
-      index.updateSheet(
-        'sheetId',
-        'Sheet1!A2:D',
-        mockResults as PromiseSettledResult<SheetUpdateResult | null>[]
-      )
-    ).resolves.toBeUndefined();
-    expect(batchUpdateMock).toHaveBeenCalled();
-    expect(getMock).toHaveBeenCalled();
+(globalThis as typeof globalThis & { fetch: jest.Mock }).fetch =
+  mockDiscordFetch;
+
+const env: Env = {
+  GOOGLE_CLIENT_EMAIL: 'test@example.com',
+  GOOGLE_PRIVATE_KEY: 'dummy',
+  SPREADSHEET_ID: 'sheetid',
+  DISCORD_WEBHOOK_URL: 'https://discord.com/api/webhooks/test',
+  STATUS_KV: { get: mockGet, put: mockPut } as unknown as KVNamespace,
+  DISCORD_MENTION_ROLE_ID: undefined,
+};
+
+describe('Cloudflare Worker Entrypoint', () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    mockGet.mockResolvedValue(undefined);
+    mockSheetsGet.mockResolvedValue({
+      data: {
+        sheets: [{ properties: { sheetId: 1, title: 'Sheet1' } }],
+      },
+    });
+    mockSheetsValuesGet.mockResolvedValue({
+      data: { values: [['Server1', 'https://a.com']] },
+    });
+    mockSheetsBatchUpdate.mockResolvedValue({});
   });
 
-  it('APIエラー時はthrowされる', async () => {
-    const batchUpdateMock = jest.fn().mockRejectedValue(new Error('api error'));
-    const getMock = jest.fn().mockResolvedValue({
-      data: { sheets: [{ properties: { title: 'Sheet1', sheetId: 0 } }] },
-    });
-    const sheetsApiMock = createSheetsApiMock(batchUpdateMock, getMock);
-    jest.spyOn(index.google, 'sheets').mockReturnValue(sheetsApiMock);
-
-    const mockResults: PromiseFulfilledResult<SheetUpdateResult>[] = [
-      {
-        status: 'fulfilled',
-        value: {
-          index: 0,
-          status: 'OK',
-          lastUpdate: '2024-01-01',
-          color: 'white',
-        },
-      },
-    ];
-
-    await expect(
-      index.updateSheet(
-        'sheetId',
-        'Sheet1!A2:D',
-        mockResults as PromiseSettledResult<SheetUpdateResult | null>[]
-      )
-    ).rejects.toThrow('api error');
-    expect(getMock).toHaveBeenCalled();
+  it('fetch: 正常系で200レスポンス', async () => {
+    const req = new Request('https://example.com');
+    const res = await handler.fetch(req, env);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { message: string };
+    expect(body.message).toMatch(/Server health check complete/);
+    expect(mockDiscordFetch).toHaveBeenCalled();
+    expect(mockPut).toHaveBeenCalled();
   });
 
-  it('空の結果の場合はAPIが呼ばれない', async () => {
-    const batchUpdateMock = jest.fn().mockResolvedValue({});
-    const getMock = jest.fn().mockResolvedValue({
-      data: { sheets: [{ properties: { title: 'Sheet1', sheetId: 0 } }] },
-    });
-    const sheetsApiMock = createSheetsApiMock(batchUpdateMock, getMock);
-    jest.spyOn(index.google, 'sheets').mockReturnValue(sheetsApiMock);
+  it('fetch: Google Sheets APIエラー時は500', async () => {
+    mockSheetsGet.mockRejectedValueOnce(new Error('sheets error'));
+    const req = new Request('https://example.com');
+    const res = await handler.fetch(req, env);
+    expect(res.status).toBe(500);
+    const body = (await res.json()) as { error: string };
+    expect(body.error).toMatch(/sheets error/);
+  });
 
+  it('scheduled: 正常系でエラーなく完了', async () => {
     await expect(
-      index.updateSheet('sheetId', 'Sheet1!A2:D', [])
+      handler.scheduled({} as ScheduledController, env)
     ).resolves.toBeUndefined();
-    expect(batchUpdateMock).not.toHaveBeenCalled();
-    expect(getMock).toHaveBeenCalled();
+    expect(mockDiscordFetch).toHaveBeenCalled();
+    expect(mockPut).toHaveBeenCalled();
+  });
+
+  it('scheduled: Google Sheets APIエラー時もcatchされる', async () => {
+    mockSheetsGet.mockRejectedValueOnce(new Error('sheets error'));
+    await expect(
+      handler.scheduled({} as ScheduledController, env)
+    ).resolves.toBeUndefined();
   });
 });
