@@ -32,4 +32,4 @@ export interface SheetUpdateResult {
   lastUpdate?: string;
   deleteColumns?: boolean;
   needsUpdate?: boolean;
-} 
+}

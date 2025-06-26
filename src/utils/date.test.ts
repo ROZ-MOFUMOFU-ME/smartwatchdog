@@ -5,4 +5,4 @@ describe('getCurrentJST', () => {
     const result = getCurrentJST();
     expect(result).toMatch(/UTC\+0900 \(JST\)$/);
   });
-}); 
+});

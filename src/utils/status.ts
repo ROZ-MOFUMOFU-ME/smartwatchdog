@@ -1,7 +1,9 @@
 import type { ServerStatus } from '../types';
 
 // Generate current statuses from sheet rows
-export const generateCurrentStatuses = async (rows: string[][]): Promise<{
+export const generateCurrentStatuses = async (
+  rows: string[][]
+): Promise<{
   currentStatuses: Record<string, ServerStatus>;
   removedStatuses: Record<string, boolean>;
 }> => {
@@ -15,4 +17,4 @@ export const generateCurrentStatuses = async (rows: string[][]): Promise<{
     }
   }
   return { currentStatuses, removedStatuses };
-}; 
+};

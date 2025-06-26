@@ -1,4 +1,8 @@
-import { PutObjectCommand, GetObjectCommand, S3Client } from '@aws-sdk/client-s3';
+import {
+  PutObjectCommand,
+  GetObjectCommand,
+  S3Client,
+} from '@aws-sdk/client-s3';
 import type { ServerStatus, S3StatusData } from '../types';
 import { streamToString } from './stream';
 
@@ -25,19 +29,23 @@ export const readStatusesFromS3 = async (
   s3Client: S3Client,
   fileName: string,
   bucketName: string
-): Promise<S3StatusData | {}> => {
+): Promise<S3StatusData | object> => {
   try {
-    const data = await s3Client.send(new GetObjectCommand({
-      Bucket: bucketName,
-      Key: fileName,
-    }));
-    const statusData = await streamToString((data as any).Body);
+    const data = await s3Client.send(
+      new GetObjectCommand({
+        Bucket: bucketName,
+        Key: fileName,
+      })
+    );
+    const statusData = await streamToString(
+      (data as { Body: NodeJS.ReadableStream }).Body
+    );
     return JSON.parse(statusData) as S3StatusData;
-  } catch (error: any) {
-    if (error.name === 'NoSuchKey') {
+  } catch (error) {
+    if ((error as { name?: string }).name === 'NoSuchKey') {
       return {};
     } else {
       throw error;
     }
   }
-}; 
+};

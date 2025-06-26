@@ -15,7 +15,9 @@ const statuses = { foo: { status: 'OK', lastUpdate: 'now' } };
 describe('writeStatusesToS3', () => {
   it('S3に正しく書き込める', async () => {
     mockSend.mockResolvedValueOnce({});
-    await expect(writeStatusesToS3(s3Client, statuses, fileName, sheetUrl, bucketName)).resolves.toBeUndefined();
+    await expect(
+      writeStatusesToS3(s3Client, statuses, fileName, sheetUrl, bucketName)
+    ).resolves.toBeUndefined();
     expect(mockSend).toHaveBeenCalledWith(expect.any(PutObjectCommand));
   });
-}); 
+});

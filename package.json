@@ -1,6 +1,6 @@
 {
   "name": "sheetswatchdog",
-  "version": "0.1.2",
+  "version": "0.2.0",
   "description": "Seamlessly monitor and manage server uptime using Google Sheets and AWS Lambda for real-time performance insights.",
   "main": "dist/index.js",
   "scripts": {
