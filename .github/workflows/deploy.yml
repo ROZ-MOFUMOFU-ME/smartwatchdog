@@ -37,7 +37,21 @@ jobs:
       - name: Build
         run: npm run build
       - name: Deploy
-        uses: cloudflare/wrangler-action@v3
-        with:
-          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          GOOGLE_CLIENT_EMAIL: ${{ secrets.GOOGLE_CLIENT_EMAIL }}
+          GOOGLE_PRIVATE_KEY: ${{ secrets.GOOGLE_PRIVATE_KEY }}
+          SPREADSHEET_ID: ${{ secrets.SPREADSHEET_ID }}
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          DISCORD_MENTION_ROLE_ID: ${{ secrets.DISCORD_MENTION_ROLE_ID }}
+        run: |
+          npx wrangler deploy src/index.ts \
+            --name=smartwatchdog \
+            --compatibility-date=2024-06-26 \
+            --env=production \
+            --var GOOGLE_CLIENT_EMAIL="$GOOGLE_CLIENT_EMAIL" \
+            --var GOOGLE_PRIVATE_KEY="$GOOGLE_PRIVATE_KEY" \
+            --var SPREADSHEET_ID="$SPREADSHEET_ID" \
+            --var DISCORD_WEBHOOK_URL="$DISCORD_WEBHOOK_URL" \
+            --var DISCORD_MENTION_ROLE_ID="$DISCORD_MENTION_ROLE_ID"
