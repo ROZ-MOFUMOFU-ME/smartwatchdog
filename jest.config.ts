@@ -15,7 +15,7 @@ const config: Config = {
     '/node_modules/',
     '/dist/',
     '/coverage/',
-    '.*\\.d\\.ts$'
+    '.*\\.d\\.ts$',
   ],
   // テストタイムアウト設定
   testTimeout: 10000,
@@ -27,4 +27,4 @@ const config: Config = {
   verbose: true,
 };
 
-export default config; 
+export default config;
