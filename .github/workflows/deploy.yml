@@ -68,6 +68,7 @@ jobs:
             { binding = "STATUS_KV", id = "$KV_ID" }
           ]
           EOF
+          cat wrangler.toml
       - name: Set secrets for Cloudflare Worker
         run: |
           ENV_NAME=${{ github.ref == 'refs/heads/main' && 'production' || 'dev' }}
