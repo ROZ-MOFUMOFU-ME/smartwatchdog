@@ -40,7 +40,7 @@ jobs:
         run: |
           cat <<EOF > wrangler.toml
           name = "smartwatchdog"
-          main = "src/index.ts"
+          main = "dist/index.js"
           compatibility_date = "2025-06-26"
           compatibility_flags = ["nodejs_compat"]
 
