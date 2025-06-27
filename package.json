@@ -5,12 +5,12 @@
   "main": "dist/index.js",
   "type": "module",
   "scripts": {
-    "build": "tsc",
+    "build": "tsc --listEmittedFiles",
     "clean": "rm -rf dist",
-    "deploy": "wrangler deploy",
+    "deploy": "wrangler deploy --env=production",
     "start": "node dist/index.js",
     "start:ts": "ts-node src/index.ts",
-    "test": "node_modules/.bin/jest --passWithNoTests --verbose=false",
+    "test": "node_modules/.bin/jest --passWithNoTests",
     "lint": "eslint --ext .ts src",
     "format": "prettier --ignore-path .gitignore --write \"**/*.+(js|ts|json)\""
   },
