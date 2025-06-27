@@ -1,4 +1,4 @@
-
+name = "smartwatchdog"
 main = "dist/index.js"
 compatibility_date = "2025-06-01"
 compatibility_flags = ["nodejs_compat"]
@@ -23,12 +23,12 @@ enabled = true
 [build]
 command = "npm run build"
 
-[env.dev]
+[env.development]
 kv_namespaces = [
   { binding = "STATUS_KV", id = "bb7a0427a0724e9ea48aaec2714ddad9" }
 ]
 
-[env.dev.vars]
+[env.development.vars]
 RANGE = 'A2:D'
 PRODUCTION = "false"
 
