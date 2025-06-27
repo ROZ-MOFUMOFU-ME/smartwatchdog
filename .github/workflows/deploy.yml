@@ -46,28 +46,28 @@ jobs:
             KV_ID="${{ secrets.STATUS_KV_ID }}"
           fi
           cat <<EOF > wrangler.toml
-          name = "smartwatchdog"
-          main = "dist/index.js"
-          compatibility_date = "2025-06-26"
-          compatibility_flags = ["nodejs_compat"]
-          kv_namespaces = [
-            { binding = "STATUS_KV", id = "${{ secrets.STATUS_KV_ID }}" }
-          ]
-          [triggers]
-          crons = ["*/10 * * * *"] 
-          [observability.logs]
-          enabled = true
-          [build]
-          command = "npm run build"
-          [env.production]
-          kv_namespaces = [
-            { binding = "STATUS_KV", id = "${{ secrets.STATUS_KV_ID }}" }
-          ]
-          [env.dev]
-          kv_namespaces = [
-            { binding = "STATUS_KV", id = "$KV_ID" }
-          ]
-          EOF
+name = "smartwatchdog"
+main = "dist/index.js"
+compatibility_date = "2025-06-26"
+compatibility_flags = ["nodejs_compat"]
+kv_namespaces = [
+  { binding = "STATUS_KV", id = "${{ secrets.STATUS_KV_ID }}" }
+]
+[triggers]
+crons = ["*/10 * * * *"]
+[observability.logs]
+enabled = true
+[build]
+command = "npm run build"
+[env.production]
+kv_namespaces = [
+  { binding = "STATUS_KV", id = "${{ secrets.STATUS_KV_ID }}" }
+]
+[env.dev]
+kv_namespaces = [
+  { binding = "STATUS_KV", id = "$KV_ID" }
+]
+EOF
           cat wrangler.toml
       - name: Set secrets for Cloudflare Worker
         run: |
