@@ -23,12 +23,12 @@ enabled = true
 [build]
 command = "npm run build"
 
-[env.development]
+[env.dev]
 kv_namespaces = [
   { binding = "STATUS_KV", id = "bb7a0427a0724e9ea48aaec2714ddad9" }
 ]
 
-[env.development.vars]
+[env.dev.vars]
 RANGE = 'A2:D'
 PRODUCTION = "false"
 
