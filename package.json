@@ -1,6 +1,6 @@
 {
   "name": "smartwatchdog",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "Seamlessly monitor and manage server uptime using Google Sheets and Cloudflare Workers for real-time performance insights.",
   "main": "dist/index.js",
   "type": "module",
@@ -10,7 +10,7 @@
     "deploy": "wrangler deploy",
     "start": "node dist/index.js",
     "start:ts": "ts-node src/index.ts",
-    "test": "node --max-old-space-size=4096 node_modules/.bin/jest --passWithNoTests --verbose=false",
+    "test": "node_modules/.bin/jest --passWithNoTests --verbose=false",
     "lint": "eslint --ext .ts src",
     "format": "prettier --ignore-path .gitignore --write \"**/*.+(js|ts|json)\""
   },
@@ -24,11 +24,7 @@
     "url": "https://github.com/ROZ-MOFUMOFU-ME/smartwatchdog/issues"
   },
   "homepage": "https://github.com/ROZ-MOFUMOFU-ME/smartwatchdog#readme",
-  "dependencies": {
-    "googleapis": "^150.0.1"
-  },
   "devDependencies": {
-    "wrangler": "^4.22.0",
     "@cloudflare/workers-types": "^4.20250620.0",
     "@eslint/js": "^9.29.0",
     "@jest/globals": "^30.0.3",
@@ -42,10 +38,11 @@
     "eslint-plugin-import": "^2.32.0",
     "eslint-plugin-prettier": "^5.5.1",
     "jest": "^30.0.3",
-    "prettier": "^3.6.1",
+    "prettier": "^3.6.2",
     "ts-jest": "^29.4.0",
     "ts-node": "^10.9.2",
     "typescript": "^5.8.3",
-    "typescript-eslint": "^8.35.0"
+    "typescript-eslint": "^8.35.0",
+    "wrangler": "^4.22.0"
   }
 }

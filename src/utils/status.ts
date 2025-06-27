@@ -35,7 +35,7 @@ const checkTcpStatus = async (
   port: number
 ): Promise<string> => {
   const timeoutPromise = new Promise<string>(
-    (resolve) => setTimeout(() => resolve('ERROR: TCP Timeout'), 10000) // 10-second timeout
+    (resolve) => setTimeout(() => resolve('ERROR: TCP Timeout'), 15000) // 15-second timeout
   );
 
   const connectPromise = (async () => {

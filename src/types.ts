@@ -17,4 +17,5 @@ export interface Env {
   DISCORD_WEBHOOK_URL: string;
   STATUS_KV: KVNamespace;
   DISCORD_MENTION_ROLE_ID?: string;
+  RANGE: string;
 }
