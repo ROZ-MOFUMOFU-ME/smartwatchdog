@@ -48,14 +48,6 @@ jobs:
             { binding = "STATUS_KV", id = "${{ secrets.STATUS_KV_ID }}" }
           ]
 
-          [vars]
-          GOOGLE_CLIENT_EMAIL = "${{ secrets.GOOGLE_CLIENT_EMAIL }}"
-          GOOGLE_PRIVATE_KEY = "${{ secrets.GOOGLE_PRIVATE_KEY }}"
-          SPREADSHEET_ID = "${{ secrets.SPREADSHEET_ID }}"
-          DISCORD_WEBHOOK_URL = "${{ secrets.DISCORD_WEBHOOK_URL }}"
-          DISCORD_MENTION_ROLE_ID = "${{ secrets.DISCORD_MENTION_ROLE_ID }}"
-          RANGE = "${{ secrets.RANGE }}"
-
           [triggers]
           crons = ["*/10 * * * *"] 
 
@@ -69,15 +61,16 @@ jobs:
           kv_namespaces = [
             { binding = "STATUS_KV", id = "${{ secrets.STATUS_KV_ID }}" }
           ]
-          [env.production.vars]
-          GOOGLE_CLIENT_EMAIL = "${{ secrets.GOOGLE_CLIENT_EMAIL }}"
-          GOOGLE_PRIVATE_KEY = "${{ secrets.GOOGLE_PRIVATE_KEY }}"
-          SPREADSHEET_ID = "${{ secrets.SPREADSHEET_ID }}"
-          DISCORD_WEBHOOK_URL = "${{ secrets.DISCORD_WEBHOOK_URL }}"
-          DISCORD_MENTION_ROLE_ID = "${{ secrets.DISCORD_MENTION_ROLE_ID }}"
-          RANGE = "${{ secrets.RANGE }}"
-          PRODUCTION = "true"
           EOF
+      - name: Set secrets for Cloudflare Worker
+        run: |
+          npx wrangler secret put GOOGLE_CLIENT_EMAIL --env=production --non-interactive <<< "${{ secrets.GOOGLE_CLIENT_EMAIL }}"
+          npx wrangler secret put GOOGLE_PRIVATE_KEY --env=production --non-interactive <<< "${{ secrets.GOOGLE_PRIVATE_KEY }}"
+          npx wrangler secret put SPREADSHEET_ID --env=production --non-interactive <<< "${{ secrets.SPREADSHEET_ID }}"
+          npx wrangler secret put DISCORD_WEBHOOK_URL --env=production --non-interactive <<< "${{ secrets.DISCORD_WEBHOOK_URL }}"
+          npx wrangler secret put DISCORD_MENTION_ROLE_ID --env=production --non-interactive <<< "${{ secrets.DISCORD_MENTION_ROLE_ID }}"
+          npx wrangler secret put RANGE --env=production --non-interactive <<< "${{ secrets.RANGE }}"
+          npx wrangler secret put PRODUCTION --env=production --non-interactive <<< "${{ secrets.PRODUCTION }}"
       - name: Deploy
         uses: cloudflare/wrangler-action@v3
         with:
