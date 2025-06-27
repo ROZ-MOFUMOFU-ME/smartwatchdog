@@ -58,7 +58,7 @@ jobs:
           ]
           [env.dev]
           kv_namespaces = [
-            { binding = "STATUS_KV", id = "${{ secrets.STATUS_KV_ID_DEV }}" }
+            { binding = "STATUS_KV", id = "${{ secrets.STATUS_KV_ID_DEV || secrets.STATUS_KV_ID }}" }
           ]
           EOF
       - name: Set secrets for Cloudflare Worker
