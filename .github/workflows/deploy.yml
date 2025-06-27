@@ -36,9 +36,11 @@ jobs:
         run: npm install
       - name: Build
         run: npm run build
+      - name: Set CLOUDFLARE_API_TOKEN env
+        run: echo "CLOUDFLARE_API_TOKEN=${{ secrets.CLOUDFLARE_API_TOKEN }}" >> $GITHUB_ENV
       - name: Generate wrangler.toml
         run: |
-          if [ "${{ github.ref }}" = "refs/heads/dev" ]; then
+          if [ "${{ github.ref }}" = "refs/heads/dev" ] && [ -n "${{ secrets.STATUS_KV_ID_DEV }}" ]; then
             KV_ID="${{ secrets.STATUS_KV_ID_DEV }}"
           else
             KV_ID="${{ secrets.STATUS_KV_ID }}"
