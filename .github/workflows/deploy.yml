@@ -23,3 +23,5 @@ jobs:
         run: npm run build
       - name: Run tests
         run: npm test
+      - name: Finalize
+        run: echo "Build and Test completed successfully."
