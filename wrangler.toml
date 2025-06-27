@@ -24,6 +24,7 @@ enabled = true
 command = "npm run build"
 
 [env.development]
+name = "smartwatchdog-development"
 kv_namespaces = [
   { binding = "STATUS_KV", id = "bb7a0427a0724e9ea48aaec2714ddad9" }
 ]
@@ -33,6 +34,7 @@ RANGE = 'A2:D'
 PRODUCTION = "false"
 
 [env.production]
+name = "smartwatchdog"
 kv_namespaces = [
   { binding = "STATUS_KV", id = "bb7a0427a0724e9ea48aaec2714ddad9" }
 ]
