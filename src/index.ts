@@ -258,4 +258,10 @@ export default {
       });
     }
   },
+  async scheduled(event: ScheduledEvent, env: Env, _ctx: ExecutionContext) {
+    // 定期実行時もfetchと同じ監視処理を実行
+    // fetchと同じエンドポイントロジックを呼び出す
+    const req = new Request('https://dummy-cron-trigger');
+    await this.fetch(req, env);
+  },
 };
