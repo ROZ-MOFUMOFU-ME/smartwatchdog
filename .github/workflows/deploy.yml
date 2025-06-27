@@ -84,4 +84,4 @@ EOF
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          command: deploy --config=./wrangler.toml --env=${{ github.ref == 'refs/heads/main' && 'production' || 'dev' }}
+          command: deploy --compatibility-date 2025-06-27 --env=${{ github.ref == 'refs/heads/main' && 'production' || 'dev' }}
