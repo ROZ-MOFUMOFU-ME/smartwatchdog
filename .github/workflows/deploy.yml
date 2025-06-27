@@ -43,9 +43,11 @@ jobs:
           main = "src/index.ts"
           compatibility_date = "2025-06-26"
           compatibility_flags = ["nodejs_compat"]
+
           kv_namespaces = [
             { binding = "STATUS_KV", id = "${{ secrets.STATUS_KV_ID }}" }
           ]
+
           [vars]
           GOOGLE_CLIENT_EMAIL = "${{ secrets.GOOGLE_CLIENT_EMAIL }}"
           GOOGLE_PRIVATE_KEY = "${{ secrets.GOOGLE_PRIVATE_KEY }}"
@@ -53,13 +55,27 @@ jobs:
           DISCORD_WEBHOOK_URL = "${{ secrets.DISCORD_WEBHOOK_URL }}"
           DISCORD_MENTION_ROLE_ID = "${{ secrets.DISCORD_MENTION_ROLE_ID }}"
           RANGE = "${{ secrets.RANGE }}"
+
           [triggers]
           crons = ["*/10 * * * *"] 
+
           [observability.logs]
           enabled = true
+
           [build]
           command = "npm run build"
+
+          [env.production]
+          kv_namespaces = [
+            { binding = "STATUS_KV", id = "${{ secrets.STATUS_KV_ID }}" }
+          ]
           [env.production.vars]
+          GOOGLE_CLIENT_EMAIL = "${{ secrets.GOOGLE_CLIENT_EMAIL }}"
+          GOOGLE_PRIVATE_KEY = "${{ secrets.GOOGLE_PRIVATE_KEY }}"
+          SPREADSHEET_ID = "${{ secrets.SPREADSHEET_ID }}"
+          DISCORD_WEBHOOK_URL = "${{ secrets.DISCORD_WEBHOOK_URL }}"
+          DISCORD_MENTION_ROLE_ID = "${{ secrets.DISCORD_MENTION_ROLE_ID }}"
+          RANGE = "${{ secrets.RANGE }}"
           PRODUCTION = "true"
           EOF
       - name: Deploy
