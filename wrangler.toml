@@ -1,0 +1,44 @@
+name = "smartwatchdog"
+main = "dist/index.js"
+compatibility_date = "2025-06-01"
+compatibility_flags = ["nodejs_compat"]
+
+[vars]
+# GOOGLE_CLIENT_EMAIL = "your-service-account@your-project.iam.gserviceaccount.com"
+# Use `wrangler secret put` for private keys
+# GOOGLE_PRIVATE_KEY
+# SPREADSHEET_ID = "YOUR_SPREADSHEET_ID"
+# RANGE = "Sheet1!A2:D"
+# Use `wrangler secret put` for webhook URLs
+# DISCORD_WEBHOOK_URL
+# DISCORD_MENTION_ROLE_ID = "123456789012345678"
+
+# Cron Trigger to run every 5 minutes
+[triggers]
+crons = ["*/10 * * * *"] 
+
+[observability.logs]
+enabled = true
+
+[build]
+command = "npm run build"
+
+[env.development]
+name = "smartwatchdog-development"
+kv_namespaces = [
+  { binding = "STATUS_KV", id = "bb7a0427a0724e9ea48aaec2714ddad9" }
+]
+
+[env.development.vars]
+RANGE = 'A2:D'
+PRODUCTION = "false"
+
+[env.production]
+name = "smartwatchdog"
+kv_namespaces = [
+  { binding = "STATUS_KV", id = "bb7a0427a0724e9ea48aaec2714ddad9" }
+]
+
+[env.production.vars]
+RANGE = 'A2:D'
+PRODUCTION = "true"
