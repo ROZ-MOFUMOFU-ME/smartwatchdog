@@ -30,8 +30,9 @@ kv_namespaces = [
 ]
 
 [env.development.vars]
-RANGE = 'A2:D'
+RANGE = "A2:D"
 PRODUCTION = "false"
+WRANGLER_CI_OVERRIDE_NAME = "smartwatchdog-development"
 
 [env.production]
 name = "smartwatchdog"
@@ -40,5 +41,5 @@ kv_namespaces = [
 ]
 
 [env.production.vars]
-RANGE = 'A2:D'
+RANGE = "A2:D"
 PRODUCTION = "true"
