@@ -1,7 +1,7 @@
 # SmartWatchdog 🐕
 
-[![Lint/Format](https://github.com/your-username/smartwatchdog/actions/workflows/lint-format.yml/badge.svg)](https://github.com/your-username/smartwatchdog/actions/workflows/lint-format.yml)
-[![Deploy](https://github.com/your-username/smartwatchdog/actions/workflows/deploy.yml/badge.svg)](https://github.com/your-username/smartwatchdog/actions/workflows/deploy.yml)
+[![Lint/Format](https://github.com/ROZ-MOFUMOFU-ME/smartwatchdog/actions/workflows/lint-format.yml/badge.svg)](https://github.com/ROZ-MOFUMOFU-ME/smartwatchdog/actions/workflows/lint-format.yml)
+[![Deploy](https://github.com/ROZ-MOFUMOFU-ME/smartwatchdog/actions/workflows/deploy.yml/badge.svg)](https://github.com/ROZ-MOFUMOFU-ME/smartwatchdog/actions/workflows/deploy.yml)
 [![Coverage Status](https://img.shields.io/badge/coverage-auto--generated-brightgreen)](./coverage/lcov-report/index.html)
 [![TypeScript](https://img.shields.io/badge/TypeScript-007ACC?style=flat&logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
 [![Node.js](https://img.shields.io/badge/Node.js-22.x-green.svg)](https://nodejs.org/)
@@ -114,7 +114,7 @@ SmartWatchdogは、Googleスプレッドシートを管理画面として使用�
 ### 1. リポジトリのクローン
 
 ```bash
-git clone https://github.com/your-username/smartwatchdog.git
+git clone https://github.com/ROZ-MOFUMOFU-ME/smartwatchdog.git
 cd smartwatchdog
 npm install
 ```
