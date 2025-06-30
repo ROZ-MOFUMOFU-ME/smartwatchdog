@@ -1,21 +1,22 @@
 name = "smartwatchdog"
 main = "dist/index.js"
-compatibility_date = "2025-06-27"
+compatibility_date = "2025-06-30"
 compatibility_flags = ["nodejs_compat"]
 
 [vars]
-# GOOGLE_CLIENT_EMAIL = "your-service-account@your-project.iam.gserviceaccount.com"
-# Use `wrangler secret put` for private keys
-# GOOGLE_PRIVATE_KEY
-# SPREADSHEET_ID = "YOUR_SPREADSHEET_ID"
-# RANGE = "Sheet1!A2:D"
-# Use `wrangler secret put` for webhook URLs
-# DISCORD_WEBHOOK_URL
-# DISCORD_MENTION_ROLE_ID = "123456789012345678"
+GOOGLE_CLIENT_EMAIL = "notify@cf-sheetswatchdog.iam.gserviceaccount.com"
+SPREADSHEET_ID = "1GjPdvHMEWJMAk7wLUWPWdJuJmfxvc8Av_1sq1Q3NQ-8"
+RANGE = "A2:D"
+DISCORD_MENTION_ROLE_ID = "1227585802712911892"
 
 # Cron Trigger to run every 5 minutes
 [triggers]
 crons = ["*/10 * * * *"] 
+
+# KV Namespace binding (applies to all environments)
+[[kv_namespaces]]
+binding = "STATUS_KV"
+id = "bb7a0427a0724e9ea48aaec2714ddad9"
 
 [observability.logs]
 enabled = true
@@ -23,18 +24,8 @@ enabled = true
 [build]
 command = "npm run build"
 
-[env.development]
-kv_namespaces = [
-  { binding = "STATUS_KV", id = "bb7a0427a0724e9ea48aaec2714ddad9" }
-]
-
 [env.development.vars]
 PRODUCTION = "false"
-
-[env.production]
-kv_namespaces = [
-  { binding = "STATUS_KV", id = "bb7a0427a0724e9ea48aaec2714ddad9" }
-]
 
 [env.production.vars]
 PRODUCTION = "true"

@@ -29,8 +29,20 @@ export default {
         DISCORD_MENTION_ROLE_ID,
         STATUS_KV,
       } = env;
+
+      // 必須環境変数のチェック
+      if (
+        !GOOGLE_CLIENT_EMAIL ||
+        !GOOGLE_PRIVATE_KEY ||
+        !SPREADSHEET_ID ||
+        !DISCORD_WEBHOOK_URL
+      ) {
+        throw new Error('Missing required environment variables');
+      }
+
       // 秘密鍵の改行を正しく処理
       const fixedPrivateKey = GOOGLE_PRIVATE_KEY.replace(/\\n/g, '\n');
+
       const sheets = await fetchAllSheets(
         GOOGLE_CLIENT_EMAIL,
         fixedPrivateKey,
@@ -50,6 +62,7 @@ export default {
 
       for (const sheet of sheets) {
         const kvKey = `${SPREADSHEET_ID}-${sheet.sheetId}`;
+
         // 1. シートごとに全行取得
         const rows = await fetchSheetRows(
           GOOGLE_CLIENT_EMAIL,
@@ -57,11 +70,13 @@ export default {
           SPREADSHEET_ID,
           `${sheet.title}!${RANGE}`
         );
+
         // 2. KVから前回の状態を取得
         const prevStatusesRaw = await STATUS_KV.get(kvKey);
         const prevStatuses: Record<string, ServerStatus> = prevStatusesRaw
           ? JSON.parse(prevStatusesRaw)
           : {};
+
         // 3. 監視対象を抽出
         const targets: { rowIndex: number; row: string[] }[] = [];
         rows.forEach((row, rowIndex) => {
@@ -69,7 +84,9 @@ export default {
             targets.push({ rowIndex, row });
           }
         });
+
         const chunk = targets.slice(offset, offset + limit);
+
         // 4. chunk内の監視fetch
         const changedRows: {
           row: string[];
@@ -252,6 +269,7 @@ export default {
         { status: 200, headers: { 'Content-Type': 'application/json' } }
       );
     } catch (e) {
+      console.error('Worker error:', e);
       return new Response(JSON.stringify({ error: (e as Error).message }), {
         status: 500,
         headers: { 'Content-Type': 'application/json' },

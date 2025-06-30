@@ -1,18 +1,21 @@
 {
   "name": "smartwatchdog",
-  "version": "0.3.1",
+  "version": "0.3.2",
   "description": "Seamlessly monitor and manage server uptime using Google Sheets and Cloudflare Workers for real-time performance insights.",
   "main": "dist/index.js",
   "type": "module",
   "scripts": {
     "build": "tsc --listEmittedFiles",
     "clean": "rm -rf dist",
-    "deploy": "wrangler deploy --env=production",
+    "deploy": "wrangler deploy",
     "start": "node dist/index.js",
     "start:ts": "ts-node src/index.ts",
     "test": "node_modules/.bin/jest --passWithNoTests",
+    "test:coverage": "node_modules/.bin/jest --coverage",
     "lint": "eslint --ext .ts src",
-    "format": "prettier --ignore-path .gitignore --write \"**/*.+(js|ts|json)\""
+    "lint:fix": "eslint --ext .ts src --fix",
+    "format": "prettier --ignore-path .gitignore --write \"**/*.+(js|ts|json)\"",
+    "format:check": "prettier --ignore-path .gitignore --check \"**/*.+(js|ts|json)\""
   },
   "repository": {
     "type": "git",
@@ -25,15 +28,15 @@
   },
   "homepage": "https://github.com/ROZ-MOFUMOFU-ME/smartwatchdog#readme",
   "devDependencies": {
-    "@cloudflare/workers-types": "^4.20250620.0",
-    "@eslint/js": "^9.29.0",
+    "@cloudflare/workers-types": "^4.20250628.0",
+    "@eslint/js": "^9.30.0",
     "@jest/globals": "^30.0.3",
     "@types/axios": "^0.14.4",
     "@types/jest": "^30.0.0",
-    "@types/node": "^24.0.4",
-    "@typescript-eslint/eslint-plugin": "^8.35.0",
-    "@typescript-eslint/parser": "^8.35.0",
-    "eslint": "^9.29.0",
+    "@types/node": "^24.0.7",
+    "@typescript-eslint/eslint-plugin": "^8.35.1",
+    "@typescript-eslint/parser": "^8.35.1",
+    "eslint": "^9.30.0",
     "eslint-config-prettier": "^10.1.5",
     "eslint-plugin-import": "^2.32.0",
     "eslint-plugin-prettier": "^5.5.1",
@@ -43,7 +46,7 @@
     "ts-jest": "^29.4.0",
     "ts-node": "^10.9.2",
     "typescript": "^5.8.3",
-    "typescript-eslint": "^8.35.0",
+    "typescript-eslint": "^8.35.1",
     "wrangler": "^4.22.0"
   }
 }
