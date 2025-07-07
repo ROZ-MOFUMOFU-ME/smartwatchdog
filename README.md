@@ -83,14 +83,64 @@ SmartWatchdogは、Googleスプレッドシートを管理画面として使用�
 
 ## 🏗️ アーキテクチャ
 
+```mermaid
+graph TB
+    subgraph "外部サービス"
+        GS[Google Sheets<br/>監視対象管理・状態表示]
+        DC[Discord<br/>通知送信]
+    end
+    
+    subgraph "Cloudflare Workers"
+        CW[Cloudflare Workers<br/>メイン処理]
+        KV[Cloudflare KV<br/>状態履歴保存]
+        CRON[Cron Trigger<br/>10分間隔実行]
+    end
+    
+    subgraph "監視対象"
+        S1[Server 1<br/>https://example.com]
+        S2[Server 2<br/>https://api.example.com]
+        S3[Server N<br/>...]
+    end
+    
+    subgraph "通知"
+        WEBHOOK[Discord Webhook<br/>エラー/復旧通知]
+        MENTION[@everyone/@role<br/>メンション]
+    end
+    
+    %% データフロー
+    GS -->|監視対象取得| CW
+    CW -->|HTTP/HTTPS監視| S1
+    CW -->|HTTP/HTTPS監視| S2
+    CW -->|HTTP/HTTPS監視| S3
+    CW -->|状態保存| KV
+    CW -->|状態更新| GS
+    CW -->|通知送信| WEBHOOK
+    WEBHOOK -->|通知表示| DC
+    MENTION -->|メンション| DC
+    
+    %% Cron Trigger
+    CRON -->|定期実行| CW
+    
+    %% スタイル
+    classDef external fill:#e1f5fe,stroke:#01579b,stroke-width:2px
+    classDef worker fill:#f3e5f5,stroke:#4a148c,stroke-width:2px
+    classDef server fill:#fff3e0,stroke:#e65100,stroke-width:2px
+    classDef notification fill:#e8f5e8,stroke:#2e7d32,stroke-width:2px
+    
+    class GS,DC external
+    class CW,KV,CRON worker
+    class S1,S2,S3 server
+    class WEBHOOK,MENTION notification
 ```
-┌─────────────────┐    ┌────────────────────────┐    ┌─────────────────┐
-│   Google Sheets │    │ Cloudflare Workers     │    │     Discord     │
-│                 │    │                        │    │                 │
-│ 監視対象管理     │◄──►│ サーバー監視            │───►│ 通知送信         │
-│ 状態表示         │    │ 状態更新・KV保存        │    │                 │
-└─────────────────┘    └────────────────────────┘    └─────────────────┘
-```
+
+### 🔄 データフロー詳細
+
+1. **監視対象取得**: Google Sheetsから監視対象サーバーのリストを取得
+2. **サーバー監視**: HTTP/HTTPSリクエストで各サーバーの死活監視
+3. **状態管理**: Cloudflare KVで状態履歴を保存・比較
+4. **状態更新**: 変化があった場合のみGoogle Sheetsを更新
+5. **通知送信**: エラー/復旧時にDiscord Webhookで通知
+6. **定期実行**: Cron Triggerで10分間隔で自動実行
 
 ## 🛠️ 技術スタック
 
