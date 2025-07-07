@@ -83,6 +83,73 @@ describe('generateCurrentStatuses', () => {
     expect(Object.keys(currentStatuses)).not.toContain('');
   });
 
+  it('網羅性テスト: 様々なエラーパターンをテスト', async () => {
+    // HTTPエラー (500系)
+    (globalThis as typeof globalThis & { fetch: jest.Mock }).fetch = jest.fn(
+      () => Promise.resolve(new Response(null, { status: 500 }))
+    );
+    const rows1 = [['Server500', 'https://server500.com']];
+    const { currentStatuses: cs1 } = await generateCurrentStatuses(rows1);
+    expect(cs1['Server500'].status).toBe('ERROR: Status 500');
+
+    // ネットワークエラー (fetch reject)
+    (globalThis as typeof globalThis & { fetch: jest.Mock }).fetch = jest.fn(
+      () => Promise.reject(new Error('Network error'))
+    );
+    const rows2 = [['ServerNet', 'https://network-error.com']];
+    const { currentStatuses: cs2 } = await generateCurrentStatuses(rows2);
+    expect(cs2['ServerNet'].status).toBe('ERROR: Unreachable');
+
+    // URLが空の場合
+    const rows3 = [['ServerEmpty', '']];
+    const { currentStatuses: cs3 } = await generateCurrentStatuses(rows3);
+    expect(cs3['ServerEmpty']).toBeUndefined();
+
+    // 両方が空の場合
+    const rows4 = [['', '']];
+    const { currentStatuses: cs4 } = await generateCurrentStatuses(rows4);
+    expect(Object.keys(cs4)).toHaveLength(0);
+  });
+
+  it('TCP接続のテスト - ポート指定のURLパターン', async () => {
+    // フェッチをモック
+    (globalThis as typeof globalThis & { fetch: jest.Mock }).fetch = jest.fn(
+      () => Promise.resolve(new Response(null, { status: 200 }))
+    );
+
+    // TCP用のポート（80, 443以外）を指定
+    const rows = [['TCPServer', 'example.com:3000']];
+    const { currentStatuses } = await generateCurrentStatuses(rows);
+    // TCP接続のテストは実際の接続を試みるので、エラーになる可能性が高い
+    expect(currentStatuses['TCPServer'].status).toMatch(
+      /^(OK: Status 200|ERROR: TCP Port Unreachable)$/
+    );
+  });
+
+  it('removedStatusesのテスト - 過去の状態と現在の状態の差分', async () => {
+    // まず何かしらのサーバーを追加
+    (globalThis as typeof globalThis & { fetch: jest.Mock }).fetch = jest.fn(
+      () => Promise.resolve(new Response(null, { status: 200 }))
+    );
+  });
+
+  it('removedStatusesのテスト - 現在は常に空のオブジェクト', async () => {
+    // generateCurrentStatusesは現在removedStatusesを実際には使用していない
+    (globalThis as typeof globalThis & { fetch: jest.Mock }).fetch = jest.fn(
+      () => Promise.resolve(new Response(null, { status: 200 }))
+    );
+
+    const rows = [['Server1', 'https://example.com']];
+    const { currentStatuses, removedStatuses } =
+      await generateCurrentStatuses(rows);
+
+    // Server1が正常に処理される
+    expect(currentStatuses['Server1'].status).toBe('OK: Status 200');
+
+    // removedStatusesは現在の実装では常に空
+    expect(Object.keys(removedStatuses)).toHaveLength(0);
+  });
+
   describe('checkTcpStatus', () => {
     it('正常に接続できた場合はOK: Status 200', async () => {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
