@@ -9,9 +9,9 @@ SPREADSHEET_ID = "1GjPdvHMEWJMAk7wLUWPWdJuJmfxvc8Av_1sq1Q3NQ-8"
 RANGE = "A2:D"
 DISCORD_MENTION_ROLE_ID = "1227585802712911892"
 
-# Cron Trigger to run every 5 minutes
+# Cron Trigger to run every 30 minutes (reduced to mitigate potential CrowdSec/WAF blocks)
 [triggers]
-crons = ["*/10 * * * *"] 
+crons = ["*/30 * * * *"] 
 
 # KV Namespace binding (applies to all environments)
 [[kv_namespaces]]
