@@ -30,6 +30,12 @@ export default {
         STATUS_KV,
         HTTP_TIMEOUT_MS,
         TCP_TIMEOUT_MS,
+        CHECK_CONCURRENCY,
+        PER_REQUEST_DELAY_MS,
+        HTTP_RETRY_MAX,
+        HTTP_RETRY_BASE_DELAY_MS,
+        HTTP_RETRY_MAX_DELAY_MS,
+        HTTP_RETRY_JITTER_MS,
       } = env;
 
       // 必須環境変数のチェック
@@ -71,6 +77,39 @@ export default {
         const v = parseInt(TCP_TIMEOUT_MS || '', 10);
         return Number.isFinite(v) && v > 0 ? v : undefined;
       })();
+      const checkConcurrency = (() => {
+        const v = parseInt(CHECK_CONCURRENCY || '', 10);
+        return Number.isFinite(v) && v > 0 ? v : undefined;
+      })();
+      const perRequestDelayMs = (() => {
+        const v = parseInt(PER_REQUEST_DELAY_MS || '', 10);
+        return Number.isFinite(v) && v >= 0 ? v : undefined;
+      })();
+      const retryMax = (() => {
+        const v = parseInt(HTTP_RETRY_MAX || '', 10);
+        return Number.isFinite(v) && v >= 0 ? v : undefined;
+      })();
+      const retryBaseDelay = (() => {
+        const v = parseInt(HTTP_RETRY_BASE_DELAY_MS || '', 10);
+        return Number.isFinite(v) && v >= 0 ? v : undefined;
+      })();
+      const retryMaxDelay = (() => {
+        const v = parseInt(HTTP_RETRY_MAX_DELAY_MS || '', 10);
+        return Number.isFinite(v) && v >= 0 ? v : undefined;
+      })();
+      const retryJitter = (() => {
+        const v = parseInt(HTTP_RETRY_JITTER_MS || '', 10);
+        return Number.isFinite(v) && v >= 0 ? v : undefined;
+      })();
+      // 連続失敗通知抑制関連（設定はオプション）
+      const suppressThreshold = (() => {
+        const v = parseInt(env.ALERT_SUPPRESS_THRESHOLD || '', 10);
+        return Number.isFinite(v) && v > 0 ? v : undefined;
+      })();
+      const suppressIntervalMinutes = (() => {
+        const v = parseInt(env.ALERT_SUPPRESS_INTERVAL_MINUTES || '', 10);
+        return Number.isFinite(v) && v > 0 ? v : 30; // デフォルト30分
+      })();
 
       for (const sheet of sheets) {
         const kvKey = `${SPREADSHEET_ID}-${sheet.sheetId}`;
@@ -85,9 +124,38 @@ export default {
 
         // 2. KVから前回の状態を取得
         const prevStatusesRaw = await STATUS_KV.get(kvKey);
-        const prevStatuses: Record<string, ServerStatus> = prevStatusesRaw
-          ? JSON.parse(prevStatusesRaw)
-          : {};
+        // KV保存形式: 旧 {key: ServerStatus} / 新 { statuses: {...}, failureMeta: {...} }
+        type FailureMetaEntry = { consecutive: number; lastNotify?: number };
+        type FailureMeta = Record<string, FailureMetaEntry>;
+        interface PersistedStatusData {
+          statuses: Record<string, ServerStatus>;
+          failureMeta?: FailureMeta;
+        }
+        const isPersistedStatusData = (
+          v: unknown
+        ): v is PersistedStatusData => {
+          return (
+            typeof v === 'object' &&
+            v !== null &&
+            'statuses' in v &&
+            typeof (v as { statuses?: unknown }).statuses === 'object'
+          );
+        };
+
+        let parsed: unknown = {};
+        try {
+          parsed = prevStatusesRaw ? JSON.parse(prevStatusesRaw) : {};
+        } catch {
+          parsed = {};
+        }
+        const prevStatuses: Record<string, ServerStatus> =
+          isPersistedStatusData(parsed)
+            ? parsed.statuses
+            : (parsed as Record<string, ServerStatus>);
+        const failureMeta: FailureMeta =
+          isPersistedStatusData(parsed) && parsed.failureMeta
+            ? parsed.failureMeta
+            : {};
 
         // 3. 監視対象を抽出
         const targets: { rowIndex: number; row: string[] }[] = [];
@@ -106,18 +174,61 @@ export default {
           statusObj: ServerStatus;
         }[] = [];
         const newStatuses: Record<string, ServerStatus> = { ...prevStatuses };
+        const newFailureMeta: typeof failureMeta = { ...failureMeta };
         await Promise.all(
           chunk.map(async ({ row, rowIndex }) => {
             const { currentStatuses } = await generateCurrentStatuses([row], {
               httpTimeoutMs,
               tcpTimeoutMs,
+              concurrency: checkConcurrency,
+              perRequestDelayMs,
+              retry: {
+                maxRetries: retryMax,
+                baseDelayMs: retryBaseDelay,
+                maxDelayMs: retryMaxDelay,
+                jitterMs: retryJitter,
+              },
             });
             const key = row[0] || row[1];
             const statusObj = currentStatuses[key];
             if (!statusObj) return;
             const prev = prevStatuses[key];
             // 前回とstatusが違う場合のみ通知・更新
+            const isError = statusObj.status.startsWith('ERROR');
+            // 連続失敗カウンタ更新
+            if (isError) {
+              const meta = newFailureMeta[key] || { consecutive: 0 };
+              meta.consecutive += 1; // 初回失敗も1
+              newFailureMeta[key] = meta;
+            } else {
+              // 成功でカウンタリセット
+              if (newFailureMeta[key]) newFailureMeta[key].consecutive = 0;
+            }
+            // 通知対象判定
+            let notify = false;
             if (!prev || prev.status !== statusObj.status) {
+              // 状態変化は常に通知候補
+              notify = true;
+            } else if (isError && suppressThreshold && newFailureMeta[key]) {
+              const { consecutive, lastNotify } = newFailureMeta[key];
+              if (consecutive >= suppressThreshold) {
+                // 最終通知から間隔経過で再通知
+                const nowMs = Date.now();
+                if (
+                  !lastNotify ||
+                  nowMs - lastNotify > suppressIntervalMinutes * 60 * 1000
+                ) {
+                  notify = true;
+                }
+              }
+            }
+            if (notify) {
+              if (isError) {
+                // 最終通知時刻更新
+                const meta = newFailureMeta[key] || { consecutive: 1 };
+                meta.lastNotify = Date.now();
+                newFailureMeta[key] = meta;
+              }
               changedRows.push({ row, rowIndex, statusObj });
             }
             // 最新状態を保存
@@ -272,7 +383,10 @@ export default {
         }
 
         // シートごとにKVへ最新状態を保存
-        await STATUS_KV.put(kvKey, JSON.stringify(newStatuses));
+        await STATUS_KV.put(
+          kvKey,
+          JSON.stringify({ statuses: newStatuses, failureMeta: newFailureMeta })
+        );
         allChangedRows = allChangedRows.concat(changedRows);
       }
 

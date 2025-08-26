@@ -14,9 +14,9 @@
     "test:coverage": "node_modules/.bin/jest --coverage",
     "lint": "eslint --ext .ts src",
     "lint:fix": "eslint --ext .ts src --fix",
-    "format": "prettier --write \"**/*.+(js|mjs|ts|tsx|json)\"",
-    "format:check": "prettier --check \"**/*.+(js|mjs|ts|tsx|json)\"",
-    "check": "eslint --ext .ts src && prettier --check \"**/*.+(js|mjs|ts|tsx|json)\""
+    "format": "prettier --write \"**/*.+(js|ts|tsx|json)\"",
+    "format:check": "prettier --check \"**/*.+(js|ts|tsx|json)\"",
+    "check": "eslint --ext .ts src && prettier --check \"**/*.+(js|ts|tsx|json)\""
   },
   "repository": {
     "type": "git",

@@ -1,6 +1,7 @@
 import {
   generateCurrentStatuses,
   checkTcpStatus,
+  checkServerStatus,
   __setTestForceError,
 } from './status';
 
@@ -151,7 +152,7 @@ describe('generateCurrentStatuses', () => {
   });
 
   describe('checkTcpStatus', () => {
-    it('正常に接続できた場合はOK: Status 200', async () => {
+    it('正常に接続できた場合はOK: Status 200 (TCP)', async () => {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const originalImport = (globalThis as any).import;
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -167,27 +168,69 @@ describe('generateCurrentStatuses', () => {
         return originalImport(mod);
       };
       const result = await checkTcpStatus('example.com', 12345);
-      expect(result).toBe('OK: Status 200');
+      expect(result.status).toBe('OK: Status 200');
+      expect(result.attempts).toBe(1);
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       (globalThis as any).import = originalImport;
     });
-    it('接続できない場合はERROR: TCP Port Unreachable', async () => {
+    it('接続できない場合はERROR: TCP Port Unreachable (attempts>=1)', async () => {
       __setTestForceError(true);
       const result = await checkTcpStatus('example.com', 12345);
-      expect(result).toBe('ERROR: TCP Port Unreachable');
+      expect(result.status).toBe('ERROR: TCP Port Unreachable');
+      expect(result.attempts).toBeGreaterThanOrEqual(1);
       __setTestForceError(false);
     });
-    it('openedが非同期rejectの場合はERROR: TCP Port Unreachable', async () => {
+    it('TCPリトライ: 失敗を繰り返し最終的に Unreachable', async () => {
+      // FakeTimersだと内部の逐次setTimeout制御が複雑になるためこのテストのみ実時間
+      jest.useRealTimers();
       __setTestForceError(true);
-      const result = await checkTcpStatus('example.com', 12345);
-      expect(result).toBe('ERROR: TCP Port Unreachable');
+      const result = await checkTcpStatus('example.com', 12345, 30, {
+        maxRetries: 2,
+        baseDelayMs: 1,
+        maxDelayMs: 2,
+        jitterMs: 0,
+      });
+      expect(result.status).toBe('ERROR: TCP Port Unreachable');
+      expect(result.attempts).toBe(3);
       __setTestForceError(false);
+      jest.useFakeTimers();
     });
-    it('テスト用フラグでcatchブロックに入る場合はERROR: TCP Port Unreachable', async () => {
-      __setTestForceError(true);
-      const result = await checkTcpStatus('example.com', 12345);
-      expect(result).toBe('ERROR: TCP Port Unreachable');
-      __setTestForceError(false);
+  });
+
+  describe('HTTP retry logic', () => {
+    it('HTTPリトライ: 500->500->200 で最終OKかつ attempts=3', async () => {
+      jest.useRealTimers();
+      const seq = [500, 500, 200];
+      (globalThis as typeof globalThis & { fetch: jest.Mock }).fetch = jest.fn(
+        () => {
+          const status = seq.shift() ?? 200;
+          return Promise.resolve(new Response(null, { status }));
+        }
+      );
+      const res = await checkServerStatus('https://retry-ok.com', 5000, 5000, {
+        maxRetries: 2,
+        baseDelayMs: 1,
+        maxDelayMs: 1,
+        jitterMs: 0,
+      });
+      expect(res.status).toBe('OK: Status 200');
+      expect(res.attempts).toBe(3);
+      jest.useFakeTimers();
+    });
+    it('HTTPリトライ: 常に500 で attempts=maxRetries+1 かつ最終ERROR', async () => {
+      jest.useRealTimers();
+      (globalThis as typeof globalThis & { fetch: jest.Mock }).fetch = jest.fn(
+        () => Promise.resolve(new Response(null, { status: 500 }))
+      );
+      const res = await checkServerStatus('https://retry-ng.com', 5000, 5000, {
+        maxRetries: 1,
+        baseDelayMs: 1,
+        maxDelayMs: 1,
+        jitterMs: 0,
+      });
+      expect(res.status).toBe('ERROR: Status 500');
+      expect(res.attempts).toBe(2);
+      jest.useFakeTimers();
     });
   });
 });
