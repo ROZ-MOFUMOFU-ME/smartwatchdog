@@ -18,4 +18,6 @@ export interface Env {
   STATUS_KV: KVNamespace;
   DISCORD_MENTION_ROLE_ID?: string;
   RANGE: string;
+  HTTP_TIMEOUT_MS?: string; // HTTPフェッチタイムアウト(ms)
+  TCP_TIMEOUT_MS?: string; // TCP接続タイムアウト(ms)
 }

@@ -32,10 +32,11 @@ const __setTestForceError = (v: boolean) => {
 // Check server status with a TCP connection, including a timeout.
 const checkTcpStatus = async (
   hostname: string,
-  port: number
+  port: number,
+  tcpTimeout = 30000
 ): Promise<string> => {
-  const timeoutPromise = new Promise<string>(
-    (resolve) => setTimeout(() => resolve('ERROR: TCP Timeout'), 15000) // 15-second timeout
+  const timeoutPromise = new Promise<string>((resolve) =>
+    setTimeout(() => resolve('ERROR: TCP Timeout'), tcpTimeout)
   );
 
   const connectPromise = (async () => {
@@ -61,7 +62,11 @@ const checkTcpStatus = async (
 };
 
 // Check server status by determining the correct method (HTTP fetch or TCP connect)
-const checkServerStatus = async (url: string): Promise<string> => {
+const checkServerStatus = async (
+  url: string,
+  httpTimeout = 20000,
+  tcpTimeout = 30000
+): Promise<string> => {
   if (!url) {
     return 'INVALID_URL';
   }
@@ -90,7 +95,7 @@ const checkServerStatus = async (url: string): Promise<string> => {
       const response = await fetch(url, {
         method: 'GET',
         redirect: 'follow',
-        signal: AbortSignal.timeout(10000), // 10-second timeout
+        signal: AbortSignal.timeout(httpTimeout), // configurable via env
         headers: {
           'User-Agent':
             'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36',
@@ -121,12 +126,13 @@ const checkServerStatus = async (url: string): Promise<string> => {
   }
 
   // For all others, perform a raw TCP socket connection test
-  return checkTcpStatus(hostname, port);
+  return checkTcpStatus(hostname, port, tcpTimeout);
 };
 
 // Generate current statuses from sheet rows by actively checking them
 export const generateCurrentStatuses = async (
-  rows: string[][]
+  rows: string[][],
+  opts?: { httpTimeoutMs?: number; tcpTimeoutMs?: number }
 ): Promise<{
   currentStatuses: Record<string, ServerStatus>;
   removedStatuses: Record<string, boolean>;
@@ -134,6 +140,11 @@ export const generateCurrentStatuses = async (
   const currentStatuses: Record<string, ServerStatus> = {};
   const removedStatuses: Record<string, boolean> = {};
   const lastUpdate = getCurrentTimestamp();
+
+  const httpTimeout =
+    opts?.httpTimeoutMs && opts.httpTimeoutMs > 0 ? opts.httpTimeoutMs : 20000;
+  const tcpTimeout =
+    opts?.tcpTimeoutMs && opts.tcpTimeoutMs > 0 ? opts.tcpTimeoutMs : 30000;
 
   const statusPromises = rows.map(async (row) => {
     const [serverName, serverUrl] = row;
@@ -144,7 +155,11 @@ export const generateCurrentStatuses = async (
       return;
     }
     if (key) {
-      const status = await checkServerStatus(serverUrl);
+      const status = await checkServerStatus(
+        serverUrl,
+        httpTimeout,
+        tcpTimeout
+      );
       currentStatuses[key] = { status, lastUpdate };
     }
   });

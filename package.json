@@ -1,6 +1,6 @@
 {
   "name": "smartwatchdog",
-  "version": "0.3.2",
+  "version": "0.3.3",
   "description": "Seamlessly monitor and manage server uptime using Google Sheets and Cloudflare Workers for real-time performance insights.",
   "main": "dist/index.js",
   "type": "module",
@@ -14,8 +14,9 @@
     "test:coverage": "node_modules/.bin/jest --coverage",
     "lint": "eslint --ext .ts src",
     "lint:fix": "eslint --ext .ts src --fix",
-    "format": "prettier --ignore-path .gitignore --write \"**/*.+(js|ts|json)\"",
-    "format:check": "prettier --ignore-path .gitignore --check \"**/*.+(js|ts|json)\""
+    "format": "prettier --write \"**/*.+(js|mjs|ts|tsx|json)\"",
+    "format:check": "prettier --check \"**/*.+(js|mjs|ts|tsx|json)\"",
+    "check": "eslint --ext .ts src && prettier --check \"**/*.+(js|mjs|ts|tsx|json)\""
   },
   "repository": {
     "type": "git",
@@ -28,25 +29,24 @@
   },
   "homepage": "https://github.com/ROZ-MOFUMOFU-ME/smartwatchdog#readme",
   "devDependencies": {
-    "@cloudflare/workers-types": "^4.20250628.0",
-    "@eslint/js": "^9.30.0",
-    "@jest/globals": "^30.0.3",
-    "@types/axios": "^0.14.4",
+    "@cloudflare/workers-types": "^4.20250826.0",
+    "@eslint/js": "^9.34.0",
+    "@jest/globals": "^30.0.5",
     "@types/jest": "^30.0.0",
-    "@types/node": "^24.0.7",
-    "@typescript-eslint/eslint-plugin": "^8.35.1",
-    "@typescript-eslint/parser": "^8.35.1",
-    "eslint": "^9.30.0",
-    "eslint-config-prettier": "^10.1.5",
+    "@types/node": "^24.3.0",
+    "@typescript-eslint/eslint-plugin": "^8.41.0",
+    "@typescript-eslint/parser": "^8.41.0",
+    "eslint": "^9.34.0",
+    "eslint-config-prettier": "^10.1.8",
     "eslint-plugin-import": "^2.32.0",
-    "eslint-plugin-prettier": "^5.5.1",
-    "jest": "^30.0.3",
-    "jiti": "^2.4.2",
+    "eslint-plugin-prettier": "^5.5.4",
+    "jest": "^30.0.5",
+    "jiti": "^2.5.1",
     "prettier": "^3.6.2",
-    "ts-jest": "^29.4.0",
+    "ts-jest": "^29.4.1",
     "ts-node": "^10.9.2",
-    "typescript": "^5.8.3",
-    "typescript-eslint": "^8.35.1",
-    "wrangler": "^4.22.0"
+    "typescript": "^5.9.2",
+    "typescript-eslint": "^8.41.0",
+    "wrangler": "^4.33.0"
   }
 }

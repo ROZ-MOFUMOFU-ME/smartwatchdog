@@ -28,6 +28,8 @@ export default {
         DISCORD_WEBHOOK_URL,
         DISCORD_MENTION_ROLE_ID,
         STATUS_KV,
+        HTTP_TIMEOUT_MS,
+        TCP_TIMEOUT_MS,
       } = env;
 
       // 必須環境変数のチェック
@@ -59,6 +61,16 @@ export default {
         rowIndex: number;
         statusObj: ServerStatus;
       }[] = [];
+
+      // 環境変数からタイムアウト設定（無効値は無視）
+      const httpTimeoutMs = (() => {
+        const v = parseInt(HTTP_TIMEOUT_MS || '', 10);
+        return Number.isFinite(v) && v > 0 ? v : undefined;
+      })();
+      const tcpTimeoutMs = (() => {
+        const v = parseInt(TCP_TIMEOUT_MS || '', 10);
+        return Number.isFinite(v) && v > 0 ? v : undefined;
+      })();
 
       for (const sheet of sheets) {
         const kvKey = `${SPREADSHEET_ID}-${sheet.sheetId}`;
@@ -96,7 +108,10 @@ export default {
         const newStatuses: Record<string, ServerStatus> = { ...prevStatuses };
         await Promise.all(
           chunk.map(async ({ row, rowIndex }) => {
-            const { currentStatuses } = await generateCurrentStatuses([row]);
+            const { currentStatuses } = await generateCurrentStatuses([row], {
+              httpTimeoutMs,
+              tcpTimeoutMs,
+            });
             const key = row[0] || row[1];
             const statusObj = currentStatuses[key];
             if (!statusObj) return;

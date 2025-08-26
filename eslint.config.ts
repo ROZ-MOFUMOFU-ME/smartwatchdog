@@ -1,31 +1,28 @@
 import js from '@eslint/js';
 import tseslint from 'typescript-eslint';
-import prettier from 'eslint-config-prettier';
-import pluginPrettier from 'eslint-plugin-prettier';
-import pluginImport from 'eslint-plugin-import';
+import importPlugin from 'eslint-plugin-import';
+import prettierRecommended from 'eslint-plugin-prettier/recommended';
 
 export default [
-  {
-    ignores: ['dist/**'],
-  },
+  { ignores: ['dist/**'] },
   js.configs.recommended,
   ...tseslint.configs.recommended,
-  prettier,
   {
+    files: ['**/*.ts', '**/*.tsx'],
     plugins: {
       '@typescript-eslint': tseslint.plugin,
-      prettier: pluginPrettier,
-      import: pluginImport,
+      import: importPlugin,
     },
-    files: ['**/*.ts', '**/*.tsx'],
     languageOptions: {
       parser: tseslint.parser,
       ecmaVersion: 2020,
       sourceType: 'module',
     },
     rules: {
-      'prettier/prettier': 'error',
-      'import/order': ['error', { alphabetize: { order: 'asc' } }],
+      'import/order': [
+        'error',
+        { alphabetize: { order: 'asc', caseInsensitive: true } },
+      ],
       '@typescript-eslint/no-explicit-any': 'warn',
       '@typescript-eslint/no-unused-vars': [
         'error',
@@ -33,4 +30,6 @@ export default [
       ],
     },
   },
+  // Prettier recommended should be last so it can turn off conflicting stylistic rules
+  prettierRecommended,
 ];
