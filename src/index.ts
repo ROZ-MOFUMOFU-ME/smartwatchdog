@@ -344,7 +344,7 @@ export default {
           env.SPREADSHEET_ID,
           env.STATUS_KV
         );
-        const fanoutLimit = parseInt(env.FANOUT_LIMIT || '45', 10);
+        const fanoutLimit = parseInt(env.FANOUT_LIMIT || '40', 10);
         for (const sheet of sheets) {
           // 1つの子が失敗しても残りを止めないよう、各呼び出しをcatchする
           await self
@@ -361,7 +361,7 @@ export default {
       // フォールバック: SELF未設定（dev/local/テスト）では従来どおり逐次処理
       await runHealthCheck(env, {
         offset: 0,
-        limit: parseInt(env.FANOUT_LIMIT || '45', 10),
+        limit: parseInt(env.FANOUT_LIMIT || '40', 10),
       });
     } catch (e) {
       console.error('Scheduled handler error:', e);

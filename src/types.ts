@@ -20,6 +20,7 @@ export interface Env {
   RANGE: string;
   // 自己宛サービスバインディング。scheduledでシートごとに子invocationへファンアウトする
   SELF?: Fetcher;
-  // 子invocation1回あたりの監視上限（既定45。subrequest上限50に対する余裕分）
+  // 子invocation1回あたりの監視上限（既定40。subrequest上限50に対しmetadata/batchGet/
+  // 書き込み/Discord通知のオーバーヘッド分の余裕を残す）
   FANOUT_LIMIT?: string;
 }
