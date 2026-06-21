@@ -185,6 +185,27 @@ describe('Cloudflare Worker Entrypoint', () => {
     expect(body.error).toMatch(/Missing required environment variables/);
   });
 
+  it('fetch: sheetId+title 指定時はmetadata取得を省略する（子invocation最適化）', async () => {
+    const req = new Request('https://example.com?sheetId=1&title=Sheet1');
+    const res = await handler.fetch(req, env);
+    expect(res.status).toBe(200);
+
+    const calls = (global.fetch as jest.Mock).mock.calls.map((c) =>
+      String(c[0])
+    );
+    // 行取得は values:batchGet で行われる
+    expect(calls.some((u) => u.includes('values:batchGet'))).toBe(true);
+    // metadata（/v4/spreadsheets/sheetid で values/batchGet/batchUpdate を含まない）は呼ばれない
+    const metadataCalled = calls.some(
+      (u) =>
+        u.includes('/v4/spreadsheets/sheetid') &&
+        !u.includes('values:batchGet') &&
+        !u.includes(':batchUpdate') &&
+        !u.includes('/values/')
+    );
+    expect(metadataCalled).toBe(false);
+  });
+
   it('scheduled: cronトリガーのテスト', async () => {
     const event = {
       scheduledTime: Date.now(),
