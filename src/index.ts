@@ -363,14 +363,17 @@ export default {
         );
         const fanoutLimit = parseInt(env.FANOUT_LIMIT || '40', 10);
         for (const sheet of sheets) {
-          // 1つの子が失敗しても残りを止めないよう、各呼び出しをcatchする
-          await self
-            .fetch(
+          // 1つの子が失敗しても残りを止めないよう、各呼び出しをtry/catchで囲む。
+          // 子レスポンスのbodyを読み切らないと、親invocation終了時に子が打ち切られて
+          // tail上 "Canceled" になる。結果は使わないが必ず読み切って完了を待つ。
+          try {
+            const childResp = await self.fetch(
               `https://smartwatchdog.internal/?sheetId=${sheet.sheetId}&title=${encodeURIComponent(sheet.title)}&limit=${fanoutLimit}`
-            )
-            .catch((err) => {
-              console.error(`Fan-out failed for sheet ${sheet.sheetId}:`, err);
-            });
+            );
+            await childResp.text();
+          } catch (err) {
+            console.error(`Fan-out failed for sheet ${sheet.sheetId}:`, err);
+          }
         }
         return;
       }
