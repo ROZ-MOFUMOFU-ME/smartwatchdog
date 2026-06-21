@@ -5,13 +5,15 @@ import { generateCurrentStatuses } from './status';
 export async function fetchAllSheets(
   clientEmail: string,
   privateKey: string,
-  spreadsheetId: string
+  spreadsheetId: string,
+  kv?: KVNamespace
 ): Promise<{ sheetId: number; title: string }[]> {
   const scope = 'https://www.googleapis.com/auth/spreadsheets.readonly';
   const accessToken = await getGoogleAccessToken(
     clientEmail,
     privateKey,
-    scope
+    scope,
+    kv
   );
   const url = `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}`;
   const resp = await fetch(url, {
@@ -69,13 +71,15 @@ export async function fetchSheetRows(
   clientEmail: string,
   privateKey: string,
   spreadsheetId: string,
-  range: string
+  range: string,
+  kv?: KVNamespace
 ): Promise<string[][]> {
   const scope = 'https://www.googleapis.com/auth/spreadsheets.readonly';
   const accessToken = await getGoogleAccessToken(
     clientEmail,
     privateKey,
-    scope
+    scope,
+    kv
   );
   const url = `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent(range)}`;
   const resp = await fetch(url, {
@@ -87,6 +91,38 @@ export async function fetchSheetRows(
   }
   const data = (await resp.json()) as { values: string[][] };
   return data.values || [];
+}
+
+// 複数レンジの行を1回のvalues:batchGetでまとめて取得（サブリクエスト削減）
+// 戻り値はrangesと同じ順序の二次元配列の配列。値が無いレンジは空配列。
+export async function fetchSheetsRows(
+  clientEmail: string,
+  privateKey: string,
+  spreadsheetId: string,
+  ranges: string[],
+  kv?: KVNamespace
+): Promise<string[][][]> {
+  if (ranges.length === 0) return [];
+  const scope = 'https://www.googleapis.com/auth/spreadsheets.readonly';
+  const accessToken = await getGoogleAccessToken(
+    clientEmail,
+    privateKey,
+    scope,
+    kv
+  );
+  const query = ranges.map((r) => `ranges=${encodeURIComponent(r)}`).join('&');
+  const url = `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values:batchGet?${query}`;
+  const resp = await fetch(url, {
+    headers: { Authorization: `Bearer ${accessToken}` },
+  });
+  if (!resp.ok) {
+    const text = await resp.text();
+    throw new Error('Failed to fetch sheet rows (batch): ' + text);
+  }
+  const data = (await resp.json()) as {
+    valueRanges?: { values?: string[][] }[];
+  };
+  return ranges.map((_, i) => data.valueRanges?.[i]?.values || []);
 }
 
 // ステータスをチェックし、変化があった行だけbatchUpdateで書き込む＋背景色も更新

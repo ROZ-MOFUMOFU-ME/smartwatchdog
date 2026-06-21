@@ -71,7 +71,8 @@ describe('sheets_fetch', () => {
       expect(mockGetGoogleAccessToken).toHaveBeenCalledWith(
         'test@example.com',
         'private-key',
-        'https://www.googleapis.com/auth/spreadsheets.readonly'
+        'https://www.googleapis.com/auth/spreadsheets.readonly',
+        undefined
       );
     });
 

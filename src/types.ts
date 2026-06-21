@@ -18,4 +18,8 @@ export interface Env {
   STATUS_KV: KVNamespace;
   DISCORD_MENTION_ROLE_ID?: string;
   RANGE: string;
+  // 自己宛サービスバインディング。scheduledでシートごとに子invocationへファンアウトする
+  SELF?: Fetcher;
+  // 子invocation1回あたりの監視上限（既定45。subrequest上限50に対する余裕分）
+  FANOUT_LIMIT?: string;
 }

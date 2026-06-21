@@ -64,6 +64,28 @@ describe('Cloudflare Worker Entrypoint', () => {
         typeof url === 'string' &&
         url.includes('sheets.googleapis.com/v4/spreadsheets/sheetid')
       ) {
+        // バッチ取得（values:batchGet）はメタデータ分岐（/values/を含まない）より前に判定
+        if (url.includes('values:batchGet')) {
+          return Promise.resolve({
+            ok: true,
+            json: () =>
+              Promise.resolve({
+                valueRanges: [
+                  {
+                    range: 'Sheet1!A2:D',
+                    values: [
+                      [
+                        'Server1',
+                        'https://a.com',
+                        'OK: Status 200',
+                        '2024-01-01 00:00:00',
+                      ],
+                    ],
+                  },
+                ],
+              }),
+          } as Response);
+        }
         // メタデータ取得
         if (!url.includes('/values/')) {
           return Promise.resolve({
@@ -197,6 +219,28 @@ describe('Cloudflare Worker Entrypoint', () => {
         typeof url === 'string' &&
         url.includes('sheets.googleapis.com/v4/spreadsheets/sheetid')
       ) {
+        // バッチ取得（values:batchGet）はメタデータ分岐（/values/を含まない）より前に判定
+        if (url.includes('values:batchGet')) {
+          return Promise.resolve({
+            ok: true,
+            json: () =>
+              Promise.resolve({
+                valueRanges: [
+                  {
+                    range: 'Sheet1!A2:D',
+                    values: [
+                      [
+                        'Server1',
+                        'https://a.com',
+                        'OK: Status 200',
+                        '2024-01-01 00:00:00',
+                      ],
+                    ],
+                  },
+                ],
+              }),
+          } as Response);
+        }
         if (!url.includes('/values/')) {
           return Promise.resolve({
             ok: true,
