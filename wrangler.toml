@@ -8,15 +8,24 @@ GOOGLE_CLIENT_EMAIL = "notify@cf-sheetswatchdog.iam.gserviceaccount.com"
 SPREADSHEET_ID = "1GjPdvHMEWJMAk7wLUWPWdJuJmfxvc8Av_1sq1Q3NQ-8"
 RANGE = "A2:D"
 DISCORD_MENTION_ROLE_ID = "1227585802712911892"
+FANOUT_LIMIT = "45"
 
 # Cron Trigger to run every 5 minutes
 [triggers]
-crons = ["*/10 * * * *"] 
+crons = ["*/10 * * * *"]
 
 # KV Namespace binding (applies to all environments)
 [[kv_namespaces]]
 binding = "STATUS_KV"
 id = "bb7a0427a0724e9ea48aaec2714ddad9"
+
+# Self service binding: scheduledがシートごとに自分自身を子として呼び出すために使用。
+# 各子invocationは新たな50 subrequest枠を得るため、合計の監視可能数を増やせる。
+# 注意: 初回デプロイ時はこのserviceがまだ存在せず失敗する場合がある。
+# その1回だけこの[[services]]ブロックをコメントアウトしてデプロイ→復帰して再デプロイする。
+[[services]]
+binding = "SELF"
+service = "smartwatchdog"
 
 [observability.logs]
 enabled = true

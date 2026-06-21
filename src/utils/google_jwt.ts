@@ -66,11 +66,27 @@ async function createJWT(
 }
 
 // JWTでアクセストークン取得
+// kvを渡すと取得済みトークンをKVにキャッシュし、サブリクエスト数を削減する。
+// KVの読み書きで失敗しても、その都度新規発行にフォールバックするだけで致命的にはしない。
 export async function getGoogleAccessToken(
   clientEmail: string,
   privateKey: string,
-  scope: string
+  scope: string,
+  kv?: KVNamespace
 ): Promise<string> {
+  const cacheKey = `gtoken:${clientEmail}:${scope}`;
+
+  // 1. キャッシュ確認（kv指定時のみ）
+  if (kv) {
+    try {
+      const cached = await kv.get(cacheKey);
+      if (cached) return cached;
+    } catch {
+      // KV読み取り失敗時は新規発行にフォールバック
+    }
+  }
+
+  // 2. キャッシュミス時は従来どおり発行
   const jwt = await createJWT(clientEmail, privateKey, scope);
   const params = new URLSearchParams({
     grant_type: 'urn:ietf:params:oauth:grant-type:jwt-bearer',
@@ -83,9 +99,21 @@ export async function getGoogleAccessToken(
   });
   const data = (await resp.json()) as {
     access_token?: string;
+    expires_in?: number;
     [key: string]: unknown;
   };
   if (!data.access_token)
     throw new Error('Failed to get access token: ' + JSON.stringify(data));
+
+  // 3. 取得したトークンをKVへ保存（有効期限の5分前で失効させる）
+  if (kv) {
+    try {
+      const expirationTtl = Math.max(60, (data.expires_in ?? 3600) - 300);
+      await kv.put(cacheKey, data.access_token, { expirationTtl });
+    } catch {
+      // KV書き込み失敗は無視（トークン自体は取得済み）
+    }
+  }
+
   return data.access_token;
 }
