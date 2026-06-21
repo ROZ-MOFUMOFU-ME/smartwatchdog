@@ -166,7 +166,7 @@ async function processSheet(
         values: [u.values],
       })),
     };
-    await fetch(valuesUrl, {
+    const valuesResp = await fetch(valuesUrl, {
       method: 'POST',
       headers: {
         Authorization: `Bearer ${accessToken}`,
@@ -174,6 +174,8 @@ async function processSheet(
       },
       body: JSON.stringify(body),
     });
+    // bodyは使わないがcancelしないと接続が滞留し同時実行上限でstall→cancelされる
+    await valuesResp.body?.cancel();
 
     // 変化があった行のうち、エラー/OKで色分け
     const formatRequests: {
@@ -214,7 +216,7 @@ async function processSheet(
     // batchUpdateで書式リクエストを送信
     const formatUrl = `https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}:batchUpdate`;
     const formatBody = { requests: formatRequests };
-    await fetch(formatUrl, {
+    const formatResp = await fetch(formatUrl, {
       method: 'POST',
       headers: {
         Authorization: `Bearer ${accessToken}`,
@@ -222,6 +224,8 @@ async function processSheet(
       },
       body: JSON.stringify(formatBody),
     });
+    // 同上: 使わないbodyはcancelして接続を解放する
+    await formatResp.body?.cancel();
   }
 
   // 6. シートごとにKVへ最新状態を保存（変化が無くても保存）

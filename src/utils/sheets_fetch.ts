@@ -301,9 +301,12 @@ export async function sendDiscordWebhook(
 ) {
   const body: Record<string, unknown> = { content };
   if (embed) body.embeds = [embed];
-  await fetch(webhookUrl, {
+  const resp = await fetch(webhookUrl, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
   });
+  // レスポンスbodyを読まないと接続が開いたままになり、同時実行が上限に達して
+  // "stalled HTTP response was canceled" を誘発する。使わないのでcancelする。
+  await resp.body?.cancel();
 }
