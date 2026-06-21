@@ -8,10 +8,10 @@ GOOGLE_CLIENT_EMAIL = "notify@cf-sheetswatchdog.iam.gserviceaccount.com"
 SPREADSHEET_ID = "1GjPdvHMEWJMAk7wLUWPWdJuJmfxvc8Av_1sq1Q3NQ-8"
 RANGE = "A2:D"
 DISCORD_MENTION_ROLE_ID = "1227585802712911892"
-# 子invocation1回あたりの監視上限。1呼び出しの subrequest 上限は50で、
-# 内訳は metadata(1) + batchGet(1) + 変化時の write-scope oauth(1) + 値/書式の
-# batchUpdate(2) + Discord通知(変化数) を消費する。45 だと変化が1件でも超過するため、
-# それらのオーバーヘッド分の余裕を残して 40 に設定する（1タブが40行超なら分割推奨）。
+# 子invocation1回あたりの監視上限。1呼び出しの subrequest 上限は50。
+# 子モードは title をURLで受け取り metadata 取得を省くため、内訳は
+# batchGet(1) + 変化時 write-scope oauth(1) + 値/書式 batchUpdate(2) + Discord通知(変化数)。
+# 45 だと変化数次第で超過するため、余裕をもって 40 に設定（1タブが40行超なら分割推奨）。
 FANOUT_LIMIT = "40"
 
 # Cron Trigger to run every 5 minutes

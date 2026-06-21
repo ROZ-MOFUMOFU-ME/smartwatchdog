@@ -233,7 +233,7 @@ async function processSheet(
 // 対象シートの行はまとめて1回のbatchGetで取得し、シートごとにprocessSheetを実行する。
 async function runHealthCheck(
   env: Env,
-  opts: { sheetId?: number; offset: number; limit: number }
+  opts: { sheetId?: number; title?: string; offset: number; limit: number }
 ): Promise<ChangedRow[]> {
   const {
     GOOGLE_CLIENT_EMAIL,
@@ -257,17 +257,23 @@ async function runHealthCheck(
   // 秘密鍵の改行を正しく処理
   const fixedPrivateKey = GOOGLE_PRIVATE_KEY.replace(/\\n/g, '\n');
 
-  const allSheets = await fetchAllSheets(
-    GOOGLE_CLIENT_EMAIL,
-    fixedPrivateKey,
-    SPREADSHEET_ID,
-    STATUS_KV
-  );
-  // sheetId指定時はそのシートのみに絞り込む
-  const sheets =
-    opts.sheetId !== undefined
-      ? allSheets.filter((s) => s.sheetId === opts.sheetId)
-      : allSheets;
+  // 対象シートの確定。子invocation（sheetId+title指定）では metadata 取得を省いて
+  // subrequestを1つ節約する。それ以外は従来どおり全シートを取得して必要なら絞り込む。
+  let sheets: { sheetId: number; title: string }[];
+  if (opts.sheetId !== undefined && opts.title) {
+    sheets = [{ sheetId: opts.sheetId, title: opts.title }];
+  } else {
+    const allSheets = await fetchAllSheets(
+      GOOGLE_CLIENT_EMAIL,
+      fixedPrivateKey,
+      SPREADSHEET_ID,
+      STATUS_KV
+    );
+    sheets =
+      opts.sheetId !== undefined
+        ? allSheets.filter((s) => s.sheetId === opts.sheetId)
+        : allSheets;
+  }
 
   // 選択した全シートの行を1回のvalues:batchGetでまとめて取得
   const ranges = sheets.map((s) => `${s.title}!${RANGE}`);
@@ -298,15 +304,22 @@ async function runHealthCheck(
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     try {
-      // クエリパラメータでoffset/limit/sheetIdを指定可能に
+      // クエリパラメータでoffset/limit/sheetId/titleを指定可能に
       const url = new URL(request.url);
       const offset = parseInt(url.searchParams.get('offset') || '0', 10);
       const limit = parseInt(url.searchParams.get('limit') || '50', 10);
       const sheetIdParam = url.searchParams.get('sheetId');
       const sheetId =
         sheetIdParam !== null ? parseInt(sheetIdParam, 10) : undefined;
+      // titleがあれば子invocationはmetadata取得を省ける
+      const title = url.searchParams.get('title') || undefined;
 
-      const results = await runHealthCheck(env, { sheetId, offset, limit });
+      const results = await runHealthCheck(env, {
+        sheetId,
+        title,
+        offset,
+        limit,
+      });
 
       return new Response(
         JSON.stringify({
@@ -349,7 +362,7 @@ export default {
           // 1つの子が失敗しても残りを止めないよう、各呼び出しをcatchする
           await self
             .fetch(
-              `https://smartwatchdog.internal/?sheetId=${sheet.sheetId}&limit=${fanoutLimit}`
+              `https://smartwatchdog.internal/?sheetId=${sheet.sheetId}&title=${encodeURIComponent(sheet.title)}&limit=${fanoutLimit}`
             )
             .catch((err) => {
               console.error(`Fan-out failed for sheet ${sheet.sheetId}:`, err);
