@@ -223,6 +223,32 @@ describe('Cloudflare Worker Entrypoint', () => {
     expect(mockPut).toHaveBeenCalled();
   });
 
+  it('fetch: sheetId未指定でSELFありの場合はシート単位にファンアウトする', async () => {
+    const selfFetch = jest.fn(
+      async (_input: string | URL) => new Response('{}', { status: 200 })
+    );
+    const envWithSelf: Env = {
+      ...env,
+      SELF: { fetch: selfFetch } as unknown as Fetcher,
+    };
+
+    const req = new Request('https://example.com');
+    const res = await handler.fetch(req, envWithSelf);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      message: string;
+      dispatched: number;
+    };
+    expect(body.message).toMatch(/fanned out/i);
+    // メタデータのシート(Sheet1)ごとに子をディスパッチ
+    expect(body.dispatched).toBe(1);
+    expect(selfFetch).toHaveBeenCalledTimes(1);
+    const calledUrl = String(selfFetch.mock.calls[0][0]);
+    expect(calledUrl).toContain('sheetId=1');
+    expect(calledUrl).toContain('title=Sheet1');
+    expect(calledUrl).toContain('limit=40');
+  });
+
   it('fetch: KVエラー時の処理', async () => {
     mockGet.mockRejectedValue(new Error('KV error'));
 

@@ -305,14 +305,70 @@ async function runHealthCheck(
   return allChangedRows;
 }
 
+// 必須環境変数が揃っているか
+function hasRequiredEnv(env: Env): boolean {
+  return !!(
+    env.GOOGLE_CLIENT_EMAIL &&
+    env.GOOGLE_PRIVATE_KEY &&
+    env.SPREADSHEET_ID &&
+    env.DISCORD_WEBHOOK_URL
+  );
+}
+
+// SELFバインディング経由でシート単位に子invocationへファンアウトする。
+// 各子は新たな50 subrequest枠を持つため、合計の監視可能数を増やせる。
+// ファンアウトはシート単位（任意チャンク単位ではない）にして、KVキーごとの
+// 書き込み者が1実行につき必ず1つになるようにする。戻り値はディスパッチしたシート数。
+async function fanOutPerSheet(env: Env): Promise<number> {
+  const self = env.SELF;
+  if (!self) return 0;
+  const fixedPrivateKey = env.GOOGLE_PRIVATE_KEY.replace(/\\n/g, '\n');
+  const sheets = await fetchAllSheets(
+    env.GOOGLE_CLIENT_EMAIL,
+    fixedPrivateKey,
+    env.SPREADSHEET_ID,
+    env.STATUS_KV
+  );
+  const fanoutLimit = parseInt(env.FANOUT_LIMIT || '40', 10);
+  for (const sheet of sheets) {
+    // 1つの子が失敗しても残りを止めないようtry/catch。
+    // 子レスポンスのbodyを読み切らないと、親invocation終了時に子が打ち切られて
+    // tail上 "Canceled" になる。結果は使わないが必ず読み切って完了を待つ。
+    try {
+      const childResp = await self.fetch(
+        `https://smartwatchdog.internal/?sheetId=${sheet.sheetId}&title=${encodeURIComponent(sheet.title)}&limit=${fanoutLimit}`
+      );
+      await childResp.text();
+    } catch (err) {
+      console.error(`Fan-out failed for sheet ${sheet.sheetId}:`, err);
+    }
+  }
+  return sheets.length;
+}
+
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     try {
       // クエリパラメータでoffset/limit/sheetId/titleを指定可能に
       const url = new URL(request.url);
+      const sheetIdParam = url.searchParams.get('sheetId');
+
+      // sheetId未指定でSELFがあれば、cronと同じくシート単位でファンアウトする。
+      // 引数なしの/を1 invocationで全シート処理すると50 subrequest上限を超えるため。
+      if (sheetIdParam === null && env.SELF && hasRequiredEnv(env)) {
+        const dispatched = await fanOutPerSheet(env);
+        return new Response(
+          JSON.stringify({
+            message: 'Server health check fanned out',
+            dispatched,
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } }
+        );
+      }
+
+      // それ以外（sheetId指定 or SELF未設定）は同一invocationで処理する
       const offset = parseInt(url.searchParams.get('offset') || '0', 10);
       const limit = parseInt(url.searchParams.get('limit') || '50', 10);
-      const sheetIdParam = url.searchParams.get('sheetId');
       const sheetId =
         sheetIdParam !== null ? parseInt(sheetIdParam, 10) : undefined;
       // titleがあれば子invocationはmetadata取得を省ける
@@ -342,39 +398,9 @@ export default {
   },
   async scheduled(event: ScheduledEvent, env: Env, _ctx: ExecutionContext) {
     try {
-      const hasRequiredEnv =
-        env.GOOGLE_CLIENT_EMAIL &&
-        env.GOOGLE_PRIVATE_KEY &&
-        env.SPREADSHEET_ID &&
-        env.DISCORD_WEBHOOK_URL;
-
-      // SELFバインディングがあれば、シートごとに自分自身を子invocationとして呼び出す。
-      // 各子invocationは新たな50 subrequest枠を得るため、合計の監視可能数を増やせる。
-      // ファンアウトはシート単位（任意チャンク単位ではない）にして、KVキーごとの
-      // 書き込み者が1実行につき必ず1つになるようにする。
-      if (env.SELF && hasRequiredEnv) {
-        const self = env.SELF;
-        const fixedPrivateKey = env.GOOGLE_PRIVATE_KEY.replace(/\\n/g, '\n');
-        const sheets = await fetchAllSheets(
-          env.GOOGLE_CLIENT_EMAIL,
-          fixedPrivateKey,
-          env.SPREADSHEET_ID,
-          env.STATUS_KV
-        );
-        const fanoutLimit = parseInt(env.FANOUT_LIMIT || '40', 10);
-        for (const sheet of sheets) {
-          // 1つの子が失敗しても残りを止めないよう、各呼び出しをtry/catchで囲む。
-          // 子レスポンスのbodyを読み切らないと、親invocation終了時に子が打ち切られて
-          // tail上 "Canceled" になる。結果は使わないが必ず読み切って完了を待つ。
-          try {
-            const childResp = await self.fetch(
-              `https://smartwatchdog.internal/?sheetId=${sheet.sheetId}&title=${encodeURIComponent(sheet.title)}&limit=${fanoutLimit}`
-            );
-            await childResp.text();
-          } catch (err) {
-            console.error(`Fan-out failed for sheet ${sheet.sheetId}:`, err);
-          }
-        }
+      // SELFがあればシート単位でファンアウト（各子が新たな50 subrequest枠を得る）
+      if (env.SELF && hasRequiredEnv(env)) {
+        await fanOutPerSheet(env);
         return;
       }
 
