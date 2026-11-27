@@ -2,7 +2,6 @@
 
 [![Lint/Format](https://github.com/ROZ-MOFUMOFU-ME/smartwatchdog/actions/workflows/lint-format.yml/badge.svg)](https://github.com/ROZ-MOFUMOFU-ME/smartwatchdog/actions/workflows/lint-format.yml)
 [![Deploy](https://github.com/ROZ-MOFUMOFU-ME/smartwatchdog/actions/workflows/deploy.yml/badge.svg)](https://github.com/ROZ-MOFUMOFU-ME/smartwatchdog/actions/workflows/deploy.yml)
-[![Coverage Status](https://img.shields.io/badge/coverage-auto--generated-brightgreen)](./coverage/lcov-report/index.html)
 [![TypeScript](https://img.shields.io/badge/TypeScript-007ACC?style=flat&logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
 [![Node.js](https://img.shields.io/badge/Node.js-24.x-green.svg)](https://nodejs.org/)
 [![Cloudflare Workers](https://img.shields.io/badge/Cloudflare-Workers-F38020?style=flat&logo=cloudflare&logoColor=white)](https://workers.cloudflare.com/)
@@ -491,7 +490,7 @@ GitHub ActionsでLint/Format/Test/ビルドを自動実行します。本番へ�
 
 #### 1. Lint/Format/Test (`lint-format.yml`)
 
-- **トリガー**: main/dev への push・PR
+- **トリガー**: main への push・PR
 - **処理**（Node.js 24.x）:
   - ESLintによる静的解析
   - Prettierによるコード整形チェック
@@ -499,7 +498,7 @@ GitHub ActionsでLint/Format/Test/ビルドを自動実行します。本番へ�
 
 #### 2. Build/Test (`deploy.yml`)
 
-- **トリガー**: main/dev への push・PR
+- **トリガー**: main への push・PR
 - **処理**（Node.js 24.x）:
   - TypeScriptのビルド
   - Jestによるユニットテスト
@@ -518,7 +517,6 @@ npm run deploy
 
 - **Lint/Format**: コード品質の状態
 - **Deploy**: ビルド/テストの成功/失敗
-- **Coverage**: テストカバレッジ
 
 ## 🔧 トラブルシューティング
 
