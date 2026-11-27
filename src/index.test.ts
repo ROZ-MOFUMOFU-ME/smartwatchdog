@@ -354,7 +354,12 @@ describe('KVへのステータス保存', () => {
     new Request('https://example.com?sheetId=1&title=Sheet1');
 
   // batchGetで返す行と、監視先URLごとのHTTPステータスを指定してfetchをモックする
-  const mockFetch = (rows: string[][], statusByUrl: Record<string, number>) => {
+  // sheetWriteStatus でシート書き込み（:batchUpdate）の応答ステータスを変えられる
+  const mockFetch = (
+    rows: string[][],
+    statusByUrl: Record<string, number>,
+    sheetWriteStatus = 200
+  ) => {
     (global.fetch as jest.Mock) = jest.fn((url: unknown) => {
       const u = String(url);
       if (u.includes('values:batchGet')) {
@@ -366,9 +371,32 @@ describe('KVへのステータス保存', () => {
       if (u in statusByUrl) {
         return Promise.resolve(new Response(null, { status: statusByUrl[u] }));
       }
+      if (u.includes(':batchUpdate') && sheetWriteStatus !== 200) {
+        return Promise.resolve(
+          new Response('rate limit exceeded', { status: sheetWriteStatus })
+        );
+      }
       // Discord通知・シート書き込み
       return Promise.resolve(new Response(null, { status: 200 }));
     });
+  };
+
+  // シートへの書き込みリクエスト（値・書式）の本文を取り出す
+  const sheetWriteBodies = () => {
+    const calls = (global.fetch as jest.Mock).mock.calls as [
+      unknown,
+      RequestInit | undefined,
+    ][];
+    const bodyOf = (pred: (u: string) => boolean) =>
+      calls
+        .filter(([url]) => pred(String(url)))
+        .map(([, init]) => JSON.parse(String(init?.body)));
+    return {
+      values: bodyOf((u) => u.includes('values:batchUpdate')),
+      format: bodyOf(
+        (u) => u.includes(':batchUpdate') && !u.includes('values:batchUpdate')
+      ),
+    };
   };
 
   // KVの前回状態を返す。トークンキャッシュは常にヒットさせる
@@ -434,6 +462,59 @@ describe('KVへのステータス保存', () => {
     expect(saved.Server2.status).toBe('OK: Status 200');
     expect(saved.Server2.lastUpdate).not.toBe(OLD_UPDATE);
     expect(saved.Server3.status).toBe('ERROR: Status 500');
+  });
+
+  it('KVはOKでもシートのC列がERRORのままなら、通知せずにシートだけ書き直す', async () => {
+    mockFetch(
+      [['Server1', 'https://a.com', 'ERROR: TCP Port Unreachable', OLD_UPDATE]],
+      { 'https://a.com': 200 }
+    );
+    mockPrevStatuses({
+      Server1: { status: 'OK: Status 200', lastUpdate: OLD_UPDATE },
+    });
+
+    const res = await handler.fetch(childRequest(), env);
+
+    expect(res.status).toBe(200);
+    // KVの前回値からは変化していないので、通知もKV保存もしない
+    expect(fetchedUrls().some((u) => u.includes('discord.com'))).toBe(false);
+    expect(statusPuts()).toHaveLength(0);
+    // シートのC列・D列を現在の状態で書き直し、背景色も元に戻す
+    const { values, format } = sheetWriteBodies();
+    expect(values).toHaveLength(1);
+    expect(values[0].data).toEqual([
+      {
+        range: 'Sheet1!C2:D2',
+        values: [['OK: Status 200', expect.any(String)]],
+      },
+    ]);
+    expect(format).toHaveLength(1);
+    expect(format[0].requests[0].repeatCell.cell).toEqual({
+      userEnteredFormat: {},
+    });
+  });
+
+  it('シートへの書き込みに失敗してもKVは保存し、エラーをログに残す', async () => {
+    mockFetch(
+      [['Server1', 'https://a.com', 'OK: Status 200', OLD_UPDATE]],
+      { 'https://a.com': 500 },
+      429
+    );
+    mockPrevStatuses({
+      Server1: { status: 'OK: Status 200', lastUpdate: OLD_UPDATE },
+    });
+
+    const res = await handler.fetch(childRequest(), env);
+
+    expect(res.status).toBe(200);
+    expect(console.error).toHaveBeenCalledWith(
+      expect.stringContaining('Google Sheets API error')
+    );
+    // 通知の重複を防ぐためKVは保存する。シートは次の監視でC列の食い違いとして書き直される
+    expect(statusPuts()).toHaveLength(1);
+    expect(JSON.parse(statusPuts()[0][1]).Server1.status).toBe(
+      'ERROR: Status 500'
+    );
   });
 });
 
