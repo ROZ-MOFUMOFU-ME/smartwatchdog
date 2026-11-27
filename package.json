@@ -1,6 +1,6 @@
 {
   "name": "smartwatchdog",
-  "version": "0.5.0",
+  "version": "0.5.1",
   "description": "Seamlessly monitor and manage server uptime using Google Sheets and Cloudflare Workers for real-time performance insights.",
   "main": "dist/index.js",
   "type": "module",
