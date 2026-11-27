@@ -128,30 +128,6 @@ describe('generateCurrentStatuses', () => {
     );
   });
 
-  it('removedStatusesのテスト - 過去の状態と現在の状態の差分', async () => {
-    // まず何かしらのサーバーを追加
-    (globalThis as typeof globalThis & { fetch: jest.Mock }).fetch = jest.fn(
-      () => Promise.resolve(new Response(null, { status: 200 }))
-    );
-  });
-
-  it('removedStatusesのテスト - 現在は常に空のオブジェクト', async () => {
-    // generateCurrentStatusesは現在removedStatusesを実際には使用していない
-    (globalThis as typeof globalThis & { fetch: jest.Mock }).fetch = jest.fn(
-      () => Promise.resolve(new Response(null, { status: 200 }))
-    );
-
-    const rows = [['Server1', 'https://example.com']];
-    const { currentStatuses, removedStatuses } =
-      await generateCurrentStatuses(rows);
-
-    // Server1が正常に処理される
-    expect(currentStatuses['Server1'].status).toBe('OK: Status 200');
-
-    // removedStatusesは現在の実装では常に空
-    expect(Object.keys(removedStatuses)).toHaveLength(0);
-  });
-
   describe('checkTcpStatus', () => {
     it('正常に接続できた場合はOK: Status 200', async () => {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any

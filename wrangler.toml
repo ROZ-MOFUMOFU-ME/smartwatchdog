@@ -44,9 +44,3 @@ enabled = true
 
 [build]
 command = "npm run build"
-
-[env.development.vars]
-PRODUCTION = "false"
-
-[env.production.vars]
-PRODUCTION = "true"

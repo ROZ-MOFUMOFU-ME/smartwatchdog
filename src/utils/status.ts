@@ -156,10 +156,8 @@ export const generateCurrentStatuses = async (
   rows: string[][]
 ): Promise<{
   currentStatuses: Record<string, ServerStatus>;
-  removedStatuses: Record<string, boolean>;
 }> => {
   const currentStatuses: Record<string, ServerStatus> = {};
-  const removedStatuses: Record<string, boolean> = {};
   const lastUpdate = getCurrentTimestamp();
 
   const statusPromises = rows.map(async (row) => {
@@ -178,7 +176,7 @@ export const generateCurrentStatuses = async (
 
   await Promise.all(statusPromises);
 
-  return { currentStatuses, removedStatuses };
+  return { currentStatuses };
 };
 
 export { checkTcpStatus, __setTestForceError };

@@ -428,13 +428,15 @@ npx tsc --noEmit
 ```
 smartwatchdog/
 ├── src/
-│   ├── index.ts              # エントリーポイント（fetch/scheduled、ファンアウト、シートごとの監視）
+│   ├── index.ts              # エントリーポイント（fetch/scheduled、認可、ファンアウト、シートごとの監視）
 │   ├── types.ts              # TypeScript型定義
 │   └── utils/                # ユーティリティ関数
+│       ├── concurrency.ts    # 同時実行数を制限して処理する
 │       ├── date.ts           # 日時処理（JST対応）
 │       ├── google_jwt.ts     # Google JWT認証（アクセストークンのKVキャッシュ）
-│       ├── sheets_fetch.ts   # Google Sheets API操作、Discord Webhook送信
-│       └── status.ts         # HTTP/TCPのヘルスチェック
+│       ├── sheets_fetch.ts   # Google Sheets API（シート一覧・行の取得）、Discord Webhook送信
+│       ├── status.ts         # HTTP/TCPのヘルスチェック
+│       └── transition.ts     # 状態の変化の判定（連続失敗の判定、通知の要否）
 ├── .github/workflows/        # GitHub Actions
 ├── dist/                     # ビルド成果物
 ├── coverage/                 # テストカバレッジレポート
@@ -471,12 +473,14 @@ npm test -- src/utils/status.test.ts
 
 ```
 src/
-├── index.test.ts             # メイン機能のテスト
+├── index.test.ts             # メイン機能のテスト（認可、KV保存、シート更新、通知）
 └── utils/
+    ├── concurrency.test.ts   # 同時実行数の制限のテスト
     ├── date.test.ts          # 日時処理のテスト
     ├── google_jwt.test.ts    # Google認証のテスト
-    ├── sheets_fetch.test.ts  # Google Sheets API操作のテスト
-    └── status.test.ts        # ステータス処理のテスト
+    ├── sheets_fetch.test.ts  # Google Sheets API操作・Discord送信のテスト
+    ├── status.test.ts        # ステータス処理のテスト
+    └── transition.test.ts    # 状態の変化の判定のテスト
 ```
 
 ## 🔄 CI/CD

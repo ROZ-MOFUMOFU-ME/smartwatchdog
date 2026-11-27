@@ -1,15 +1,12 @@
 import { getGoogleAccessToken } from './google_jwt';
 import {
   fetchAllSheets,
-  fetchSheetValues,
-  fetchSheetRows,
-  updateSheetStatuses,
+  fetchSheetsRows,
+  sendDiscordWebhook,
 } from './sheets_fetch';
-import { generateCurrentStatuses } from './status';
 
 // Mock dependencies
 jest.mock('./google_jwt');
-jest.mock('./status');
 
 // Mock global fetch
 global.fetch = jest.fn();
@@ -17,10 +14,6 @@ global.fetch = jest.fn();
 const mockGetGoogleAccessToken = getGoogleAccessToken as jest.MockedFunction<
   typeof getGoogleAccessToken
 >;
-const mockGenerateCurrentStatuses =
-  generateCurrentStatuses as jest.MockedFunction<
-    typeof generateCurrentStatuses
-  >;
 
 describe('sheets_fetch', () => {
   beforeEach(() => {
@@ -103,196 +96,58 @@ describe('sheets_fetch', () => {
     });
   });
 
-  describe('fetchSheetValues', () => {
-    it('should return sheet values successfully', async () => {
-      // Mock fetchAllSheets call
-      const mockSheetsResponse = {
+  describe('fetchSheetsRows', () => {
+    it('レンジと同じ順で行を返し、値の無いレンジは空配列にする', async () => {
+      (global.fetch as jest.Mock).mockResolvedValue({
         ok: true,
         json: jest.fn().mockResolvedValue({
-          sheets: [
-            {
-              properties: {
-                sheetId: 0,
-                title: 'Sheet1',
-              },
-            },
-          ],
+          valueRanges: [{ values: [['Server1', 'https://a.com']] }, {}],
         }),
-      };
+      });
 
-      // Mock sheet values call
-      const mockValuesResponse = {
-        ok: true,
-        json: jest.fn().mockResolvedValue({
-          values: [
-            ['Name', 'URL', 'Status', 'Updated'],
-            ['Server1', 'https://example.com', 'OK', '2025-07-01'],
-          ],
-        }),
-      };
-
-      (global.fetch as jest.Mock)
-        .mockResolvedValueOnce(mockSheetsResponse)
-        .mockResolvedValueOnce(mockValuesResponse);
-
-      const result = await fetchSheetValues(
+      const result = await fetchSheetsRows(
         'test@example.com',
         'private-key',
-        'spreadsheet-id'
+        'spreadsheet-id',
+        ['Sheet1!A2:D', 'Sheet2!A2:D']
       );
 
-      expect(result).toEqual({
-        values: [
-          ['Name', 'URL', 'Status', 'Updated'],
-          ['Server1', 'https://example.com', 'OK', '2025-07-01'],
-        ],
-      });
+      expect(result).toEqual([[['Server1', 'https://a.com']], []]);
+      const url = String((global.fetch as jest.Mock).mock.calls[0][0]);
+      expect(url).toContain('values:batchGet');
+      expect(url).toContain(`ranges=${encodeURIComponent('Sheet2!A2:D')}`);
     });
 
-    it('should throw error when values fetch fails', async () => {
-      // Mock fetchAllSheets call (success)
-      const mockSheetsResponse = {
-        ok: true,
-        json: jest.fn().mockResolvedValue({
-          sheets: [
-            {
-              properties: {
-                sheetId: 0,
-                title: 'Sheet1',
-              },
-            },
-          ],
-        }),
-      };
-
-      // Mock sheet values call (failure)
-      const mockValuesResponse = {
+    it('APIがエラーを返したら例外を投げる', async () => {
+      (global.fetch as jest.Mock).mockResolvedValue({
         ok: false,
-        text: jest.fn().mockResolvedValue('Values API Error'),
-      };
-
-      (global.fetch as jest.Mock)
-        .mockResolvedValueOnce(mockSheetsResponse)
-        .mockResolvedValueOnce(mockValuesResponse);
+        text: jest.fn().mockResolvedValue('quota exceeded'),
+      });
 
       await expect(
-        fetchSheetValues('test@example.com', 'private-key', 'spreadsheet-id')
-      ).rejects.toThrow('Failed to fetch sheet values: Values API Error');
+        fetchSheetsRows('test@example.com', 'private-key', 'spreadsheet-id', [
+          'Sheet1!A2:D',
+        ])
+      ).rejects.toThrow('Failed to fetch sheet rows (batch): quota exceeded');
     });
   });
 
-  describe('fetchSheetRows', () => {
-    it('should return sheet rows successfully', async () => {
-      const mockResponse = {
-        ok: true,
-        json: jest.fn().mockResolvedValue({
-          values: [
-            ['Name', 'URL', 'Status', 'Updated'],
-            ['Server1', 'https://example.com', 'OK', '2025-07-01'],
-            ['Server2', 'https://api.example.com', 'ERROR', '2025-07-01'],
-          ],
-        }),
-      };
-      (global.fetch as jest.Mock).mockResolvedValue(mockResponse);
+  describe('sendDiscordWebhook', () => {
+    it('本文とembedを送り、使わない応答のbodyは閉じる', async () => {
+      const cancel = jest.fn().mockResolvedValue(undefined);
+      (global.fetch as jest.Mock).mockResolvedValue({ body: { cancel } });
 
-      const result = await fetchSheetRows(
-        'test@example.com',
-        'private-key',
-        'spreadsheet-id',
-        'Sheet1!A1:D10'
-      );
-
-      expect(result).toEqual([
-        ['Name', 'URL', 'Status', 'Updated'],
-        ['Server1', 'https://example.com', 'OK', '2025-07-01'],
-        ['Server2', 'https://api.example.com', 'ERROR', '2025-07-01'],
-      ]);
-      expect(global.fetch).toHaveBeenCalledWith(
-        'https://sheets.googleapis.com/v4/spreadsheets/spreadsheet-id/values/Sheet1!A1%3AD10',
-        expect.objectContaining({
-          headers: { Authorization: 'Bearer mock_access_token' },
-        })
-      );
-    });
-
-    it('should return empty array when no values', async () => {
-      const mockResponse = {
-        ok: true,
-        json: jest.fn().mockResolvedValue({}),
-      };
-      (global.fetch as jest.Mock).mockResolvedValue(mockResponse);
-
-      const result = await fetchSheetRows(
-        'test@example.com',
-        'private-key',
-        'spreadsheet-id',
-        'Sheet1!A1:D10'
-      );
-
-      expect(result).toEqual([]);
-    });
-
-    it('should throw error when API request fails', async () => {
-      const mockResponse = {
-        ok: false,
-        text: jest.fn().mockResolvedValue('Rows API Error'),
-      };
-      (global.fetch as jest.Mock).mockResolvedValue(mockResponse);
-
-      await expect(
-        fetchSheetRows(
-          'test@example.com',
-          'private-key',
-          'spreadsheet-id',
-          'Sheet1!A1:D10'
-        )
-      ).rejects.toThrow('Failed to fetch sheet rows: Rows API Error');
-    });
-  });
-
-  describe('updateSheetStatuses', () => {
-    it('should handle case with no rows to update', async () => {
-      // Mock fetchSheetRows to return empty data
-      const mockRowsResponse = {
-        ok: true,
-        json: jest.fn().mockResolvedValue({ values: [] }),
-      };
-      (global.fetch as jest.Mock).mockResolvedValue(mockRowsResponse);
-
-      mockGenerateCurrentStatuses.mockResolvedValue({
-        currentStatuses: {},
-        removedStatuses: {},
+      await sendDiscordWebhook('https://discord.example/webhook', 'hello', {
+        title: 't',
       });
 
-      const result = await updateSheetStatuses(
-        'test@example.com',
-        'private-key',
-        'spreadsheet-id',
-        'Sheet1',
-        'A2:D',
-        0
-      );
-
-      expect(result).toEqual({ updatedRows: [] });
-    });
-
-    it('should throw error when sheet rows fetch fails', async () => {
-      const mockResponse = {
-        ok: false,
-        text: jest.fn().mockResolvedValue('Update API Error'),
-      };
-      (global.fetch as jest.Mock).mockResolvedValue(mockResponse);
-
-      await expect(
-        updateSheetStatuses(
-          'test@example.com',
-          'private-key',
-          'spreadsheet-id',
-          'Sheet1',
-          'A2:D',
-          0
-        )
-      ).rejects.toThrow('Failed to fetch sheet rows: Update API Error');
+      const [url, init] = (global.fetch as jest.Mock).mock.calls[0];
+      expect(url).toBe('https://discord.example/webhook');
+      expect(JSON.parse(init.body)).toEqual({
+        content: 'hello',
+        embeds: [{ title: 't' }],
+      });
+      expect(cancel).toHaveBeenCalled();
     });
   });
 });

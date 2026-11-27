@@ -6,11 +6,6 @@ export interface ServerStatus {
   failCount?: number;
 }
 
-// KV保存用データ
-export interface KVStatusData {
-  statuses: Record<string, ServerStatus>;
-}
-
 // Cloudflare Workers用の環境変数型
 export interface Env {
   GOOGLE_CLIENT_EMAIL: string;
