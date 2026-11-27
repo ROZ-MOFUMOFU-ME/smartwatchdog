@@ -24,8 +24,22 @@ type ChangedRow = {
   statusObj: ServerStatus;
 };
 
-// 1シート分の監視処理。あらかじめ取得した行（rows）を受け取り、
-// 変化があった行のみDiscord通知＋シート更新を行う。KVも変化があったときだけ保存する。
+// Google Sheets APIへの書き込み結果を確認し、失敗ならログに残す。
+// 使わないbodyもcancelしないと接続が滞留し、同時実行上限でstall→cancelされる
+async function logIfFailed(resp: Response, label: string): Promise<void> {
+  if (resp.ok) {
+    await resp.body?.cancel();
+    return;
+  }
+  console.error(
+    `Google Sheets API error (${label}): ${resp.status} ${await resp.text()}`
+  );
+}
+
+// 1シート分の監視処理。あらかじめ取得した行（rows）を受け取る。
+// - Discord通知とKV保存: KVの前回値から状態が変化した行だけ
+// - シート更新: 状態が変化した行と、シートのC列が現在の状態と食い違っている行
+//   （書き込みに一度失敗しても、次の監視で自動的に直るようにするため）
 async function processSheet(
   env: Env,
   fixedPrivateKey: string,
@@ -61,7 +75,8 @@ async function processSheet(
   const chunk = targets.slice(offset, offset + limit);
 
   // 3. chunk内の監視fetch
-  const changedRows: ChangedRow[] = [];
+  const changedRows: ChangedRow[] = []; // KVの前回値から変化した行（通知・KV保存の対象）
+  const sheetRows: ChangedRow[] = []; // シートを書き直す行
   const newStatuses: Record<string, ServerStatus> = { ...prevStatuses };
   await Promise.all(
     chunk.map(async ({ row, rowIndex }) => {
@@ -70,12 +85,20 @@ async function processSheet(
       const statusObj = currentStatuses[key];
       if (!statusObj) return;
       const prev = prevStatuses[key];
-      // 前回とstatusが違う場合のみ通知・シート更新・KV保存の対象にする。
+      const item = { row, rowIndex, statusObj };
+      // 前回とstatusが違う場合のみ通知・KV保存の対象にする。
       // 変化が無い行は前回の値をそのまま残すので、KVのlastUpdateは
       // シートのD列と同じく「最後に状態が変化した時刻」になる。
-      if (!prev || prev.status !== statusObj.status) {
-        changedRows.push({ row, rowIndex, statusObj });
+      const changed = !prev || prev.status !== statusObj.status;
+      if (changed) {
+        changedRows.push(item);
         newStatuses[key] = statusObj;
+      }
+      // シートは、変化した行に加えて、C列の表示が現在の状態と違う行も書き直す。
+      // シートへの書き込みに失敗すると、KVはOKなのにシートはERRORのまま、のような
+      // 食い違いが残り、KVだけを見ていると二度と直らないため
+      if (changed || row[2] !== statusObj.status) {
+        sheetRows.push(item);
       }
     })
   );
@@ -142,11 +165,11 @@ async function processSheet(
     })
   );
 
-  // 5. 値・書式のbatchUpdateは変化があった行があるときだけ実行する。
+  // 5. 値・書式のbatchUpdateは書き直す行があるときだけ実行する。
   //    書き込みスコープのトークンも、その時だけ取得してsubrequestを節約する。
-  if (changedRows.length > 0) {
+  if (sheetRows.length > 0) {
     const updatesBySheet: { range: string; values: [string, string] }[] = [];
-    changedRows.forEach(({ rowIndex, statusObj }) => {
+    sheetRows.forEach(({ rowIndex, statusObj }) => {
       updatesBySheet.push({
         range: `${sheet.title}!C${rowIndex + 2}:D${rowIndex + 2}`,
         values: [statusObj.status, statusObj.lastUpdate],
@@ -175,10 +198,10 @@ async function processSheet(
       },
       body: JSON.stringify(body),
     });
-    // bodyは使わないがcancelしないと接続が滞留し同時実行上限でstall→cancelされる
-    await valuesResp.body?.cancel();
+    // 失敗してもKVは保存する（通知の重複を防ぐ）。シートはC列の食い違いとして次の監視で書き直される
+    await logIfFailed(valuesResp, `update values: ${sheet.title}`);
 
-    // 変化があった行のうち、エラー/OKで色分け
+    // 書き直す行を、エラー/OKで色分け
     const formatRequests: {
       repeatCell: {
         range: {
@@ -192,7 +215,7 @@ async function processSheet(
         fields: string;
       };
     }[] = [];
-    changedRows.forEach(({ rowIndex, statusObj }) => {
+    sheetRows.forEach(({ rowIndex, statusObj }) => {
       const isOk = statusObj.status.startsWith('OK');
       formatRequests.push({
         repeatCell: {
@@ -225,8 +248,7 @@ async function processSheet(
       },
       body: JSON.stringify(formatBody),
     });
-    // 同上: 使わないbodyはcancelして接続を解放する
-    await formatResp.body?.cancel();
+    await logIfFailed(formatResp, `update format: ${sheet.title}`);
   }
 
   // 6. 変化があったシートだけKVへ保存する。
