@@ -1,4 +1,4 @@
-import type { Env } from './types';
+import type { Env, ServerStatus } from './types';
 import handler from './index';
 
 let originalLog: typeof console.log;
@@ -342,5 +342,97 @@ describe('Cloudflare Worker Entrypoint', () => {
 
     // Discordエラーは処理を中断させる
     expect(res.status).toBe(500);
+  });
+});
+
+// 無料プランのKV書き込み上限（1日1,000回）対策: 状態に変化があったときだけ保存する
+describe('KVへのステータス保存', () => {
+  const STATUS_KEY = 'sheetid-1';
+  const OLD_UPDATE = '2024-01-01 00:00:00 (JST)';
+  // 子invocation相当（metadata取得を省く）でシート1枚分を処理させる
+  const childRequest = () =>
+    new Request('https://example.com?sheetId=1&title=Sheet1');
+
+  // batchGetで返す行と、監視先URLごとのHTTPステータスを指定してfetchをモックする
+  const mockFetch = (rows: string[][], statusByUrl: Record<string, number>) => {
+    (global.fetch as jest.Mock) = jest.fn((url: unknown) => {
+      const u = String(url);
+      if (u.includes('values:batchGet')) {
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({ valueRanges: [{ values: rows }] }),
+        } as Response);
+      }
+      if (u in statusByUrl) {
+        return Promise.resolve(new Response(null, { status: statusByUrl[u] }));
+      }
+      // Discord通知・シート書き込み
+      return Promise.resolve(new Response(null, { status: 200 }));
+    });
+  };
+
+  // KVの前回状態を返す。トークンキャッシュは常にヒットさせる
+  const mockPrevStatuses = (prev: Record<string, ServerStatus>) => {
+    mockGet.mockImplementation(async (key: string) =>
+      key === STATUS_KEY ? JSON.stringify(prev) : 'cached-token'
+    );
+  };
+
+  const statusPuts = () =>
+    mockPut.mock.calls.filter(([key]) => key === STATUS_KEY);
+  const fetchedUrls = () =>
+    (global.fetch as jest.Mock).mock.calls.map((c) => String(c[0]));
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+  });
+
+  it('状態に変化が無ければKVへ書き込まない', async () => {
+    mockFetch([['Server1', 'https://a.com', 'OK: Status 200', OLD_UPDATE]], {
+      'https://a.com': 200,
+    });
+    mockPrevStatuses({
+      Server1: { status: 'OK: Status 200', lastUpdate: OLD_UPDATE },
+    });
+
+    const res = await handler.fetch(childRequest(), env);
+
+    expect(res.status).toBe(200);
+    expect(statusPuts()).toHaveLength(0);
+    // 変化が無いのでDiscord通知もシート書き込みも行わない
+    expect(fetchedUrls().some((u) => u.includes('discord.com'))).toBe(false);
+    expect(fetchedUrls().some((u) => u.includes(':batchUpdate'))).toBe(false);
+  });
+
+  it('変化があればKVへ1回だけ保存し、変化していない行は前回の値を残す', async () => {
+    mockFetch(
+      [
+        ['Server1', 'https://a.com'],
+        ['Server2', 'https://b.com'],
+        ['Server3', 'https://c.com'],
+      ],
+      { 'https://a.com': 200, 'https://b.com': 200, 'https://c.com': 500 }
+    );
+    mockPrevStatuses({
+      Server1: { status: 'OK: Status 200', lastUpdate: OLD_UPDATE }, // 変化なし
+      Server2: { status: 'ERROR: Status 500', lastUpdate: OLD_UPDATE }, // 復旧
+      // Server3 は未登録（初回）
+    });
+
+    const res = await handler.fetch(childRequest(), env);
+
+    expect(res.status).toBe(200);
+    expect(statusPuts()).toHaveLength(1);
+    const saved = JSON.parse(statusPuts()[0][1]) as Record<
+      string,
+      ServerStatus
+    >;
+    expect(saved.Server1).toEqual({
+      status: 'OK: Status 200',
+      lastUpdate: OLD_UPDATE,
+    });
+    expect(saved.Server2.status).toBe('OK: Status 200');
+    expect(saved.Server2.lastUpdate).not.toBe(OLD_UPDATE);
+    expect(saved.Server3.status).toBe('ERROR: Status 500');
   });
 });

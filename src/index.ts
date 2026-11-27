@@ -25,7 +25,7 @@ type ChangedRow = {
 };
 
 // 1シート分の監視処理。あらかじめ取得した行（rows）を受け取り、
-// 変化があった行のみDiscord通知＋シート更新を行う。KVは毎回保存する。
+// 変化があった行のみDiscord通知＋シート更新を行う。KVも変化があったときだけ保存する。
 async function processSheet(
   env: Env,
   fixedPrivateKey: string,
@@ -70,12 +70,13 @@ async function processSheet(
       const statusObj = currentStatuses[key];
       if (!statusObj) return;
       const prev = prevStatuses[key];
-      // 前回とstatusが違う場合のみ通知・更新
+      // 前回とstatusが違う場合のみ通知・シート更新・KV保存の対象にする。
+      // 変化が無い行は前回の値をそのまま残すので、KVのlastUpdateは
+      // シートのD列と同じく「最後に状態が変化した時刻」になる。
       if (!prev || prev.status !== statusObj.status) {
         changedRows.push({ row, rowIndex, statusObj });
+        newStatuses[key] = statusObj;
       }
-      // 最新状態を保存
-      newStatuses[key] = statusObj;
     })
   );
 
@@ -228,8 +229,14 @@ async function processSheet(
     await formatResp.body?.cancel();
   }
 
-  // 6. シートごとにKVへ最新状態を保存（変化が無くても保存）
-  await STATUS_KV.put(kvKey, JSON.stringify(newStatuses));
+  // 6. 変化があったシートだけKVへ保存する。
+  //    無料プランのKV書き込みはアカウント全体で1日1,000回まで。変化が無くても
+  //    毎回保存すると「シート数 × 144回/日（10分間隔）」を消費し、手動実行や
+  //    外部からのアクセスが重なると上限を超える。比較に使うのはstatusだけなので、
+  //    変化が無いときの保存は不要。
+  if (changedRows.length > 0) {
+    await STATUS_KV.put(kvKey, JSON.stringify(newStatuses));
+  }
   return changedRows;
 }
 
