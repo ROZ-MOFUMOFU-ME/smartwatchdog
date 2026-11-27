@@ -242,7 +242,7 @@ npx wrangler tail
 - **手動実行**: Worker URLにアクセスで即座実行
 - **監視URL**: `https://your-worker.your-subdomain.workers.dev`
 
-> Worker URLには認証がありません。アクセスされるたびに監視が実行されるため、URLの共有には注意してください。
+> Worker URLには認証がありません。アクセスされるたびに監視が実行されるため、URLの共有には注意してください。Workers Builds のプレビュー版のURLも同じで、本番と同じKVとDiscordを使います。
 
 ## 📖 使用方法
 
@@ -458,7 +458,7 @@ src/
 
 ## 🔄 CI/CD
 
-GitHub ActionsでLint/Format/Test/ビルドを自動実行します。デプロイは手動です。
+GitHub ActionsでLint/Format/Test/ビルドを自動実行します。本番へのデプロイは、Cloudflare Workers Builds（Git連携）が main へのマージ時に自動で行います。
 
 ### GitHub Actions ワークフロー
 
@@ -478,6 +478,10 @@ GitHub ActionsでLint/Format/Test/ビルドを自動実行します。デプロ�
   - Jestによるユニットテスト
 
 ### デプロイ
+
+- **自動**: main にマージすると、Cloudflare Workers Builds がビルドして本番にデプロイします
+- **プレビュー**: main 以外のブランチに push すると、本番には反映されないプレビュー版が作られ、PRのチェック（Workers Builds）にプレビューURLが表示されます
+- **手動**: 次のコマンドでもデプロイできます
 
 ```bash
 npm run deploy
