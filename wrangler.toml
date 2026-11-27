@@ -18,6 +18,9 @@ DISCORD_MENTION_ROLE_ID = "1227585802712911892"
 # batchGet(1) + 変化時 write-scope oauth(1) + 値/書式 batchUpdate(2) + Discord通知(変化数)。
 # 45 だと変化数次第で超過するため、余裕をもって 40 に設定（1タブが40行超なら分割推奨）。
 FANOUT_LIMIT = "40"
+# 何回連続で失敗したら障害として通知するか。1回だけの瞬断やサーバーの短い再起動で
+# 通知しないよう2にする（障害の通知は最大10分遅れる）。1にすると1回の失敗ですぐ通知する
+FAIL_THRESHOLD = "2"
 
 # Cron Trigger (10分間隔)
 [triggers]

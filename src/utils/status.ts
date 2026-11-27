@@ -29,35 +29,59 @@ const __setTestForceError = (v: boolean) => {
   __test_forceError = v;
 };
 
+const TCP_TIMEOUT_MS = 15000;
+
+// チェックが失敗した理由をログに残す（誤検知の原因を後から Workers Logs で追えるように）
+const logCheckFailure = (target: string, reason: unknown): void => {
+  const detail =
+    reason instanceof Error
+      ? `${reason.name}: ${reason.message}`
+      : String(reason);
+  console.warn(`[check failed] ${target}: ${detail}`);
+};
+
 // Check server status with a TCP connection, including a timeout.
 const checkTcpStatus = async (
   hostname: string,
   port: number
 ): Promise<string> => {
-  const timeoutPromise = new Promise<string>(
-    (resolve) => setTimeout(() => resolve('ERROR: TCP Timeout'), 15000) // 15-second timeout
-  );
+  const target = `${hostname}:${port}`;
+  let socket: Socket | undefined;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let timedOut = false;
+  const timeoutPromise = new Promise<string>((resolve) => {
+    timer = setTimeout(() => {
+      timedOut = true;
+      resolve('ERROR: TCP Timeout');
+    }, TCP_TIMEOUT_MS);
+  });
 
   const connectPromise = (async () => {
-    let socket;
     try {
       if (__test_forceError) throw new Error('test-force-error');
       const connectFn = await getConnect();
       socket = connectFn({ hostname, port });
-      try {
-        await socket.opened;
-        return 'OK: Status 200';
-      } catch {
-        return 'ERROR: TCP Port Unreachable';
-      } finally {
-        await socket?.close().catch(() => {});
-      }
-    } catch {
-      return `ERROR: TCP Port Unreachable`;
+      await socket.opened;
+      return 'OK: Status 200';
+    } catch (err) {
+      // タイムアウト後に閉じたソケットの失敗は、重ねて記録しない
+      if (!timedOut) logCheckFailure(target, err);
+      return 'ERROR: TCP Port Unreachable';
     }
   })();
 
-  return Promise.race([connectPromise, timeoutPromise]);
+  try {
+    const result = await Promise.race([connectPromise, timeoutPromise]);
+    if (timedOut) {
+      logCheckFailure(target, `no connection within ${TCP_TIMEOUT_MS / 1000}s`);
+    }
+    return result;
+  } finally {
+    clearTimeout(timer);
+    // タイムアウトした場合も含めて必ず閉じる。開いたままだと、その呼び出しが
+    // 終わるまで同時接続の枠（6本）を占有し、後続のチェックを待たせてしまう
+    await socket?.close().catch(() => {});
+  }
 };
 
 // Check server status by determining the correct method (HTTP fetch or TCP connect)
@@ -71,6 +95,7 @@ const checkServerStatus = async (url: string): Promise<string> => {
     // Ensure we can parse it, even if it's just `host:port`
     parsedUrl = new URL(url.includes('://') ? url : `tcp://${url}`);
   } catch {
+    logCheckFailure(url, 'invalid URL format');
     return 'INVALID_URL_FORMAT';
   }
 
@@ -106,8 +131,10 @@ const checkServerStatus = async (url: string): Promise<string> => {
       if (response.status === 200) {
         return 'OK: Status 200';
       }
+      logCheckFailure(url, `HTTP status ${response.status}`);
       return `ERROR: Status ${response.status}`;
     } catch (error: unknown) {
+      logCheckFailure(url, error);
       if (
         typeof error === 'object' &&
         error &&

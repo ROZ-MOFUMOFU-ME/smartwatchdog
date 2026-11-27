@@ -2,6 +2,8 @@
 export interface ServerStatus {
   status: string;
   lastUpdate: string;
+  // OKの行が連続で失敗している回数（障害として確定する前の保留中のみ）
+  failCount?: number;
 }
 
 // KV保存用データ
@@ -26,4 +28,6 @@ export interface Env {
   // HTTPアクセス（手動実行）に必要なトークン。設定すると Authorization: Bearer <token> が必須になる。
   // 未設定なら従来どおり誰でも実行できる。シートごとの子invocationにも同じトークンを付けて呼ぶ
   TRIGGER_TOKEN?: string;
+  // 何回連続で失敗したら障害として通知するか（既定2。1にすると1回の失敗ですぐ通知）
+  FAIL_THRESHOLD?: string;
 }

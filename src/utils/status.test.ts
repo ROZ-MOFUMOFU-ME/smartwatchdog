@@ -6,6 +6,8 @@ import {
 
 beforeAll(() => {
   jest.useFakeTimers();
+  // 失敗理由のログ（console.warn）でテストの出力が埋もれないようにする
+  jest.spyOn(console, 'warn').mockImplementation(() => {});
 });
 afterAll(() => {
   jest.runOnlyPendingTimers();

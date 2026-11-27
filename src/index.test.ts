@@ -9,6 +9,7 @@ beforeAll(() => {
   originalError = console.error;
   jest.spyOn(console, 'log').mockImplementation(() => {});
   jest.spyOn(console, 'error').mockImplementation(() => {});
+  jest.spyOn(console, 'warn').mockImplementation(() => {});
 
   // Node.jsでcrypto.subtleがなければダミーを生やす
   const g = globalThis as { crypto?: { subtle?: Record<string, unknown> } };
@@ -327,12 +328,13 @@ describe('Cloudflare Worker Entrypoint', () => {
       } as Response);
     });
 
-    // 状態変化を検出させるため、KVから以前の状態を返す
+    // 障害の通知を起こすため、前回はOKで1回失敗済み（今回の失敗で確定する）の状態を返す
     mockGet.mockResolvedValue(
       JSON.stringify({
         Server1: {
-          status: 'ERROR: Status 500',
+          status: 'OK: Status 200',
           lastUpdate: '2024-01-01 00:00:00',
+          failCount: 1,
         },
       })
     );
@@ -500,8 +502,13 @@ describe('KVへのステータス保存', () => {
       { 'https://a.com': 500 },
       429
     );
+    // 1回失敗済みなので、今回の失敗で障害が確定してシートを書き換える
     mockPrevStatuses({
-      Server1: { status: 'OK: Status 200', lastUpdate: OLD_UPDATE },
+      Server1: {
+        status: 'OK: Status 200',
+        lastUpdate: OLD_UPDATE,
+        failCount: 1,
+      },
     });
 
     const res = await handler.fetch(childRequest(), env);
@@ -512,6 +519,115 @@ describe('KVへのステータス保存', () => {
     );
     // 通知の重複を防ぐためKVは保存する。シートは次の監視でC列の食い違いとして書き直される
     expect(statusPuts()).toHaveLength(1);
+    expect(JSON.parse(statusPuts()[0][1]).Server1.status).toBe(
+      'ERROR: Status 500'
+    );
+  });
+
+  it('OKの行が1回失敗しただけでは通知せず、保留として失敗回数だけKVに記録する', async () => {
+    mockFetch([['Server1', 'https://a.com', 'OK: Status 200', OLD_UPDATE]], {
+      'https://a.com': 500,
+    });
+    mockPrevStatuses({
+      Server1: { status: 'OK: Status 200', lastUpdate: OLD_UPDATE },
+    });
+
+    const res = await handler.fetch(childRequest(), env);
+
+    expect(res.status).toBe(200);
+    expect(fetchedUrls().some((u) => u.includes('discord.com'))).toBe(false);
+    expect(fetchedUrls().some((u) => u.includes(':batchUpdate'))).toBe(false);
+    expect(statusPuts()).toHaveLength(1);
+    expect(JSON.parse(statusPuts()[0][1]).Server1).toEqual({
+      status: 'OK: Status 200',
+      lastUpdate: OLD_UPDATE,
+      failCount: 1,
+    });
+  });
+
+  it('2回続けて失敗したら障害として通知し、シートもERRORにする', async () => {
+    mockFetch([['Server1', 'https://a.com', 'OK: Status 200', OLD_UPDATE]], {
+      'https://a.com': 500,
+    });
+    mockPrevStatuses({
+      Server1: {
+        status: 'OK: Status 200',
+        lastUpdate: OLD_UPDATE,
+        failCount: 1,
+      },
+    });
+
+    const res = await handler.fetch(childRequest(), env);
+
+    expect(res.status).toBe(200);
+    expect(fetchedUrls().filter((u) => u.includes('discord.com'))).toHaveLength(
+      1
+    );
+    expect(sheetWriteBodies().values[0].data[0].values[0][0]).toBe(
+      'ERROR: Status 500'
+    );
+    const saved = JSON.parse(statusPuts()[0][1]).Server1;
+    expect(saved.status).toBe('ERROR: Status 500');
+    expect(saved.failCount).toBeUndefined();
+  });
+
+  it('保留中に成功したら、通知せずに保留を解除する', async () => {
+    mockFetch([['Server1', 'https://a.com', 'OK: Status 200', OLD_UPDATE]], {
+      'https://a.com': 200,
+    });
+    mockPrevStatuses({
+      Server1: {
+        status: 'OK: Status 200',
+        lastUpdate: OLD_UPDATE,
+        failCount: 1,
+      },
+    });
+
+    const res = await handler.fetch(childRequest(), env);
+
+    expect(res.status).toBe(200);
+    expect(fetchedUrls().some((u) => u.includes('discord.com'))).toBe(false);
+    expect(JSON.parse(statusPuts()[0][1]).Server1).toEqual({
+      status: 'OK: Status 200',
+      lastUpdate: OLD_UPDATE,
+    });
+  });
+
+  it('ERRORの内容が変わっただけでは通知せず、表示だけ書き換える', async () => {
+    mockFetch([['Server1', 'https://a.com', 'ERROR: Status 502', OLD_UPDATE]], {
+      'https://a.com': 503,
+    });
+    mockPrevStatuses({
+      Server1: { status: 'ERROR: Status 502', lastUpdate: OLD_UPDATE },
+    });
+
+    const res = await handler.fetch(childRequest(), env);
+
+    expect(res.status).toBe(200);
+    expect(fetchedUrls().some((u) => u.includes('discord.com'))).toBe(false);
+    // 表示は新しいエラー内容にし、D列は最初に落ちた時刻のまま
+    expect(sheetWriteBodies().values[0].data).toEqual([
+      { range: 'Sheet1!C2:D2', values: [['ERROR: Status 503', OLD_UPDATE]] },
+    ]);
+  });
+
+  it('FAIL_THRESHOLD=1なら、1回の失敗ですぐ通知する', async () => {
+    mockFetch([['Server1', 'https://a.com', 'OK: Status 200', OLD_UPDATE]], {
+      'https://a.com': 500,
+    });
+    mockPrevStatuses({
+      Server1: { status: 'OK: Status 200', lastUpdate: OLD_UPDATE },
+    });
+
+    const res = await handler.fetch(childRequest(), {
+      ...env,
+      FAIL_THRESHOLD: '1',
+    });
+
+    expect(res.status).toBe(200);
+    expect(fetchedUrls().filter((u) => u.includes('discord.com'))).toHaveLength(
+      1
+    );
     expect(JSON.parse(statusPuts()[0][1]).Server1.status).toBe(
       'ERROR: Status 500'
     );

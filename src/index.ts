@@ -1,4 +1,5 @@
 import type { Env, ServerStatus } from './types';
+import { mapWithConcurrency } from './utils/concurrency';
 import { getGoogleAccessToken } from './utils/google_jwt';
 import {
   fetchAllSheets,
@@ -6,6 +7,16 @@ import {
   sendDiscordWebhook,
 } from './utils/sheets_fetch';
 import { generateCurrentStatuses } from './utils/status';
+import {
+  decideStatus,
+  isOk,
+  parseFailThreshold,
+  sameStatus,
+} from './utils/transition';
+
+// 同時に走らせるチェックの数。Workersの同時接続の上限（6）より少なくして、
+// 接続待ちの時間がタイムアウトに数えられないようにする
+const CHECK_CONCURRENCY = 5;
 
 function buildSheetUrlWithRange(
   spreadsheetId: string,
@@ -37,8 +48,9 @@ async function logIfFailed(resp: Response, label: string): Promise<void> {
 }
 
 // 1シート分の監視処理。あらかじめ取得した行（rows）を受け取る。
-// - Discord通知とKV保存: KVの前回値から状態が変化した行だけ
-// - シート更新: 状態が変化した行と、シートのC列が現在の状態と食い違っている行
+// - Discord通知: OK⇔異常が確定した行と新しい行だけ（判定は utils/transition.ts）
+// - KV保存: 記録する内容（保留中の失敗回数を含む）が変わったときだけ
+// - シート更新: 通知した行と、シートのC列が記録した状態と食い違っている行
 //   （書き込みに一度失敗しても、次の監視で自動的に直るようにするため）
 async function processSheet(
   env: Env,
@@ -74,39 +86,51 @@ async function processSheet(
 
   const chunk = targets.slice(offset, offset + limit);
 
-  // 3. chunk内の監視fetch
-  const changedRows: ChangedRow[] = []; // KVの前回値から変化した行（通知・KV保存の対象）
+  // 3. chunk内の監視（同時接続の上限内で実行）
+  const threshold = parseFailThreshold(env.FAIL_THRESHOLD);
+  const changedRows: ChangedRow[] = []; // 通知する行（OK⇔異常が確定した行・新しい行）
   const sheetRows: ChangedRow[] = []; // シートを書き直す行
   const newStatuses: Record<string, ServerStatus> = { ...prevStatuses };
-  await Promise.all(
-    chunk.map(async ({ row, rowIndex }) => {
+  let kvChanged = false;
+  await mapWithConcurrency(
+    chunk,
+    CHECK_CONCURRENCY,
+    async ({ row, rowIndex }) => {
       const { currentStatuses } = await generateCurrentStatuses([row]);
       const key = row[0] || row[1];
-      const statusObj = currentStatuses[key];
-      if (!statusObj) return;
+      const current = currentStatuses[key];
+      if (!current) return;
       const prev = prevStatuses[key];
-      const item = { row, rowIndex, statusObj };
-      // 前回とstatusが違う場合のみ通知・KV保存の対象にする。
-      // 変化が無い行は前回の値をそのまま残すので、KVのlastUpdateは
-      // シートのD列と同じく「最後に状態が変化した時刻」になる。
-      const changed = !prev || prev.status !== statusObj.status;
-      if (changed) {
-        changedRows.push(item);
-        newStatuses[key] = statusObj;
+      const { next, notify } = decideStatus(prev, current, threshold);
+      // 記録する内容が変わったときだけKVへ保存する（変化が無い行は前回の値をそのまま残すので、
+      // KVのlastUpdateはシートのD列と同じく「最後に状態が変化した時刻」になる）
+      if (!sameStatus(prev, next)) {
+        newStatuses[key] = next;
+        kvChanged = true;
+        const state = notify
+          ? 'changed'
+          : next.failCount
+            ? `pending ${next.failCount}/${threshold}`
+            : 'updated';
+        console.log(
+          `[status] ${sheet.title} / ${key}: ${prev?.status ?? '(new)'} -> ${current.status} (${state})`
+        );
       }
-      // シートは、変化した行に加えて、C列の表示が現在の状態と違う行も書き直す。
+      const item = { row, rowIndex, statusObj: next };
+      if (notify) changedRows.push(item);
+      // シートは、通知した行に加えて、C列の表示が記録した状態と違う行も書き直す。
       // シートへの書き込みに失敗すると、KVはOKなのにシートはERRORのまま、のような
       // 食い違いが残り、KVだけを見ていると二度と直らないため
-      if (changed || row[2] !== statusObj.status) {
+      if (notify || row[2] !== next.status) {
         sheetRows.push(item);
       }
-    })
+    }
   );
 
-  // 4. Discord通知は変化があった行のみ
+  // 4. Discord通知は、OK⇔異常が確定した行と新しい行のみ
   await Promise.all(
     changedRows.map(async ({ row, rowIndex, statusObj }) => {
-      const isError = statusObj.status.startsWith('ERROR');
+      const isError = !isOk(statusObj.status);
       const sheetUrl = buildSheetUrlWithRange(
         SPREADSHEET_ID,
         sheet.sheetId,
@@ -251,12 +275,11 @@ async function processSheet(
     await logIfFailed(formatResp, `update format: ${sheet.title}`);
   }
 
-  // 6. 変化があったシートだけKVへ保存する。
+  // 6. 記録する内容が変わったシートだけKVへ保存する（保留中の失敗回数の更新を含む）。
   //    無料プランのKV書き込みはアカウント全体で1日1,000回まで。変化が無くても
   //    毎回保存すると「シート数 × 144回/日（10分間隔）」を消費し、手動実行や
-  //    外部からのアクセスが重なると上限を超える。比較に使うのはstatusだけなので、
-  //    変化が無いときの保存は不要。
-  if (changedRows.length > 0) {
+  //    外部からのアクセスが重なると上限を超える。
+  if (kvChanged) {
     await STATUS_KV.put(kvKey, JSON.stringify(newStatuses));
   }
   return changedRows;
