@@ -1,5 +1,6 @@
 import { getGoogleAccessToken } from './google_jwt';
 import {
+  DiscordWebhookError,
   fetchAllSheets,
   fetchSheetsRows,
   sendDiscordWebhook,
@@ -135,7 +136,11 @@ describe('sheets_fetch', () => {
   describe('sendDiscordWebhook', () => {
     it('本文とembedを送り、使わない応答のbodyは閉じる', async () => {
       const cancel = jest.fn().mockResolvedValue(undefined);
-      (global.fetch as jest.Mock).mockResolvedValue({ body: { cancel } });
+      (global.fetch as jest.Mock).mockResolvedValue({
+        ok: true,
+        status: 204,
+        body: { cancel },
+      });
 
       await sendDiscordWebhook('https://discord.example/webhook', 'hello', {
         title: 't',
@@ -148,6 +153,48 @@ describe('sheets_fetch', () => {
         embeds: [{ title: 't' }],
       });
       expect(cancel).toHaveBeenCalled();
+    });
+
+    // 送信の失敗を捕まえて、送り直す見込みがあるか（retryable）を確かめる
+    const sendAndCatch = async () => {
+      try {
+        await sendDiscordWebhook('https://discord.example/webhook', 'hello');
+      } catch (err) {
+        return err as DiscordWebhookError;
+      }
+      throw new Error('sendDiscordWebhook did not throw');
+    };
+
+    it('回数制限（429）やDiscord側の障害（5xx）は、送り直せるエラーにする', async () => {
+      for (const status of [429, 500, 503]) {
+        (global.fetch as jest.Mock).mockResolvedValueOnce(
+          new Response('{"message": "x"}', { status })
+        );
+        const err = await sendAndCatch();
+        expect(err).toBeInstanceOf(DiscordWebhookError);
+        expect(err.retryable).toBe(true);
+        expect(err.message).toContain(`HTTP ${status}`);
+      }
+    });
+
+    it('通信エラーも、送り直せるエラーにする', async () => {
+      (global.fetch as jest.Mock).mockRejectedValueOnce(
+        new Error('Network connection lost.')
+      );
+      const err = await sendAndCatch();
+      expect(err.retryable).toBe(true);
+      expect(err.message).toContain('Network connection lost.');
+    });
+
+    it('Webhook URLの誤りなど（4xx）は、送り直しても届かないエラーにする', async () => {
+      (global.fetch as jest.Mock).mockResolvedValueOnce(
+        new Response('{"message": "Unknown Webhook", "code": 10015}', {
+          status: 404,
+        })
+      );
+      const err = await sendAndCatch();
+      expect(err.retryable).toBe(false);
+      expect(err.message).toContain('Unknown Webhook');
     });
   });
 });

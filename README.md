@@ -76,6 +76,7 @@ SmartWatchdogは、Googleスプレッドシートを管理画面として使用�
 - エラーの内容が変わっただけ（タイムアウト ⇔ 到達不能など）では再通知しない
 - エラー時のロールメンション（設定時）
 - 埋め込み（embed）形式で、スプレッドシートの該当行へのリンク付き
+- 通知は1件ずつ送り、Discord の応答（2xx 以外は失敗）を確認する。回数制限（429）や Discord 側の障害（5xx）・通信エラーで送れなかった行は、記録もシートも前回のままにして、次の監視でもう一度通知する（Webhook URL の誤りなど、送り直しても届かない場合は、ログに残してシートの表示だけ更新する）
 
 ### 4. 状態管理
 
@@ -304,7 +305,7 @@ $ curl -G -H "Authorization: Bearer $TRIGGER_TOKEN" https://your-worker.your-sub
 }
 ```
 
-`results` には状態が変化した行だけが入ります。上記の例では、Example ServerのステータスがOKからERRORに変化したため、Discord通知が送信され、スプレッドシートが更新されます。
+`results` には状態が変化した行だけが入ります。上記の例では、Example ServerのステータスがOKからERRORに変化したため、Discord通知が送信され、スプレッドシートが更新されます（Discord 側の一時的な障害で通知できなかった行は含まれず、次の監視で改めて通知されます）。
 
 #### 列の説明
 
@@ -555,6 +556,7 @@ Error: Failed to fetch sheet metadata: 403 Forbidden
 - Webhook URLが正しく設定されているか
 - Discordチャンネルの権限が正しいか
 - `npx wrangler secret list`でシークレットが設定されているか確認
+- `npx wrangler tail` や Workers Logs に `[notify failed]` が出ていないか確認。`HTTP 429` や `HTTP 5xx` などの一時的な失敗なら、次の監視でもう一度送られます。`HTTP 404`（`Unknown Webhook`）など送り直しても届かないエラーの場合は、Webhook URL を確認してください
 
 #### 4. Cronトリガーが動作しない
 

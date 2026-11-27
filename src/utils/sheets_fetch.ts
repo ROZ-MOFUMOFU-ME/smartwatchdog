@@ -67,7 +67,19 @@ export async function fetchSheetsRows(
   return ranges.map((_, i) => data.valueRanges?.[i]?.values || []);
 }
 
-// Discord Webhook通知ユーティリティ
+// Discord Webhook への送信に失敗したときのエラー。
+// retryable は、次の監視で送り直せば届く見込みがあるか（回数制限・Discord側の障害・通信エラー）
+export class DiscordWebhookError extends Error {
+  readonly retryable: boolean;
+
+  constructor(message: string, retryable: boolean) {
+    super(message);
+    this.name = 'DiscordWebhookError';
+    this.retryable = retryable;
+  }
+}
+
+// Discord Webhook通知ユーティリティ。2xx 以外は失敗として DiscordWebhookError を投げる
 export async function sendDiscordWebhook(
   webhookUrl: string,
   content: string,
@@ -75,12 +87,28 @@ export async function sendDiscordWebhook(
 ) {
   const body: Record<string, unknown> = { content };
   if (embed) body.embeds = [embed];
-  const resp = await fetch(webhookUrl, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
-  });
-  // レスポンスbodyを読まないと接続が開いたままになり、同時実行が上限に達して
-  // "stalled HTTP response was canceled" を誘発する。使わないのでcancelする。
-  await resp.body?.cancel();
+  let resp: Response;
+  try {
+    resp = await fetch(webhookUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+  } catch (err) {
+    throw new DiscordWebhookError(
+      `Discord webhook request failed: ${err instanceof Error ? err.message : String(err)}`,
+      true
+    );
+  }
+  if (resp.ok) {
+    // レスポンスbodyを読まないと接続が開いたままになり、同時実行が上限に達して
+    // "stalled HTTP response was canceled" を誘発する。使わないのでcancelする。
+    await resp.body?.cancel();
+    return;
+  }
+  const text = await resp.text().catch(() => '');
+  throw new DiscordWebhookError(
+    `Discord webhook returned HTTP ${resp.status}: ${text}`,
+    resp.status === 429 || resp.status >= 500
+  );
 }

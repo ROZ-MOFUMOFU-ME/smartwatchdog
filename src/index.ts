@@ -2,6 +2,7 @@ import type { Env, ServerStatus } from './types';
 import { mapWithConcurrency } from './utils/concurrency';
 import { getGoogleAccessToken } from './utils/google_jwt';
 import {
+  DiscordWebhookError,
   fetchAllSheets,
   fetchSheetsRows,
   sendDiscordWebhook,
@@ -52,6 +53,7 @@ async function logIfFailed(resp: Response, label: string): Promise<void> {
 // - KV保存: 記録する内容（保留中の失敗回数を含む）が変わったときだけ
 // - シート更新: 通知した行と、シートのC列が記録した状態と食い違っている行
 //   （書き込みに一度失敗しても、次の監視で自動的に直るようにするため）
+// - Discord側の一時的な障害で通知できなかった行は、記録もシートも進めず、次の監視で再通知する
 async function processSheet(
   env: Env,
   fixedPrivateKey: string,
@@ -91,7 +93,7 @@ async function processSheet(
   const changedRows: ChangedRow[] = []; // 通知する行（OK⇔異常が確定した行・新しい行）
   const sheetRows: ChangedRow[] = []; // シートを書き直す行
   const newStatuses: Record<string, ServerStatus> = { ...prevStatuses };
-  let kvChanged = false;
+  const changedKeys = new Set<string>(); // 記録する内容が変わった行（KV保存の要否）
   await mapWithConcurrency(
     chunk,
     CHECK_CONCURRENCY,
@@ -106,7 +108,7 @@ async function processSheet(
       // KVのlastUpdateはシートのD列と同じく「最後に状態が変化した時刻」になる）
       if (!sameStatus(prev, next)) {
         newStatuses[key] = next;
-        kvChanged = true;
+        changedKeys.add(key);
         const state = notify
           ? 'changed'
           : next.failCount
@@ -127,67 +129,86 @@ async function processSheet(
     }
   );
 
-  // 4. Discord通知は、OK⇔異常が確定した行と新しい行のみ
-  await Promise.all(
-    changedRows.map(async ({ row, rowIndex, statusObj }) => {
-      const isError = !isOk(statusObj.status);
-      const sheetUrl = buildSheetUrlWithRange(
-        SPREADSHEET_ID,
-        sheet.sheetId,
-        rowIndex
-      );
-      const embed = {
-        title: isError
-          ? `:rotating_light: Server health check failure - ${sheet.title || 'Unknown Sheet'}`
-          : `:white_check_mark: Server Recovered - ${sheet.title || 'Unknown Sheet'}`,
-        color: isError ? 0xff0000 : 0x00ff00,
-        description: '',
-        fields: [
-          {
-            name: 'Server Name',
-            value: row[0] || 'N/A',
-            inline: true,
-          },
-          {
-            name: 'Server URL',
-            value: row[1] ? `${row[1]}` : 'N/A',
-            inline: true,
-          },
-          {
-            name: '\u200B',
-            value: '\u200B',
-            inline: true,
-          },
-          {
-            name: 'Status',
-            value: `${isError ? '🔴' : '🟢'} ${statusObj.status}`,
-            inline: true,
-          },
-          {
-            name: 'Last Updated',
-            value: statusObj.lastUpdate,
-            inline: true,
-          },
-          {
-            name: '\u200B',
-            value: '\u200B',
-            inline: true,
-          },
-          {
-            name: '\u200B',
-            value: `[📊 View in Google Sheets](${sheetUrl})`,
-            inline: false,
-          },
-        ],
-        timestamp: new Date().toISOString(),
-      };
-      const content =
-        isError && DISCORD_MENTION_ROLE_ID
-          ? `<@&${DISCORD_MENTION_ROLE_ID}>`
-          : '';
+  // 4. Discord通知は、OK⇔異常が確定した行と新しい行のみ。
+  //    Webhook の回数制限に当たりにくいよう1件ずつ送る
+  const confirmedRows: ChangedRow[] = []; // 状態の変化を確定した行（戻り値）
+  for (const item of changedRows) {
+    const { row, rowIndex, statusObj } = item;
+    const isError = !isOk(statusObj.status);
+    const sheetUrl = buildSheetUrlWithRange(
+      SPREADSHEET_ID,
+      sheet.sheetId,
+      rowIndex
+    );
+    const embed = {
+      title: isError
+        ? `:rotating_light: Server health check failure - ${sheet.title || 'Unknown Sheet'}`
+        : `:white_check_mark: Server Recovered - ${sheet.title || 'Unknown Sheet'}`,
+      color: isError ? 0xff0000 : 0x00ff00,
+      description: '',
+      fields: [
+        {
+          name: 'Server Name',
+          value: row[0] || 'N/A',
+          inline: true,
+        },
+        {
+          name: 'Server URL',
+          value: row[1] ? `${row[1]}` : 'N/A',
+          inline: true,
+        },
+        {
+          name: '\u200B',
+          value: '\u200B',
+          inline: true,
+        },
+        {
+          name: 'Status',
+          value: `${isError ? '🔴' : '🟢'} ${statusObj.status}`,
+          inline: true,
+        },
+        {
+          name: 'Last Updated',
+          value: statusObj.lastUpdate,
+          inline: true,
+        },
+        {
+          name: '\u200B',
+          value: '\u200B',
+          inline: true,
+        },
+        {
+          name: '\u200B',
+          value: `[📊 View in Google Sheets](${sheetUrl})`,
+          inline: false,
+        },
+      ],
+      timestamp: new Date().toISOString(),
+    };
+    const content =
+      isError && DISCORD_MENTION_ROLE_ID
+        ? `<@&${DISCORD_MENTION_ROLE_ID}>`
+        : '';
+    try {
       await sendDiscordWebhook(DISCORD_WEBHOOK_URL, content, embed);
-    })
-  );
+      confirmedRows.push(item);
+    } catch (err) {
+      const key = row[0] || row[1];
+      console.error(`[notify failed] ${sheet.title} / ${key}:`, err);
+      if (err instanceof DiscordWebhookError && err.retryable) {
+        // Discord側の一時的な障害: 記録もシートも前回のままにして、次の監視でもう一度判定・通知する
+        const prev = prevStatuses[key];
+        if (prev) newStatuses[key] = prev;
+        else delete newStatuses[key];
+        changedKeys.delete(key);
+        const i = sheetRows.indexOf(item);
+        if (i >= 0) sheetRows.splice(i, 1);
+      } else {
+        // Webhook URLの誤りなど、送り直しても届かない: 記録とシートの表示だけは進める
+        confirmedRows.push(item);
+      }
+    }
+  }
 
   // 5. 値・書式のbatchUpdateは書き直す行があるときだけ実行する。
   //    書き込みスコープのトークンも、その時だけ取得してsubrequestを節約する。
@@ -279,10 +300,10 @@ async function processSheet(
   //    無料プランのKV書き込みはアカウント全体で1日1,000回まで。変化が無くても
   //    毎回保存すると「シート数 × 144回/日（10分間隔）」を消費し、手動実行や
   //    外部からのアクセスが重なると上限を超える。
-  if (kvChanged) {
+  if (changedKeys.size > 0) {
     await STATUS_KV.put(kvKey, JSON.stringify(newStatuses));
   }
-  return changedRows;
+  return confirmedRows;
 }
 
 // 監視処理の本体。sheetId指定時はそのシートだけを対象にする（ファンアウトの子invocation用）。

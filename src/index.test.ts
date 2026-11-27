@@ -342,8 +342,9 @@ describe('Cloudflare Worker Entrypoint', () => {
     const req = new Request('https://example.com');
     const res = await handler.fetch(req, env);
 
-    // Discordエラーは処理を中断させる
-    expect(res.status).toBe(500);
+    // 通信エラーは一時的な失敗として処理を続け、その行の記録は前回のまま（次の監視で再通知する）
+    expect(res.status).toBe(200);
+    expect(mockPut.mock.calls.some(([key]) => key === 'sheetid-1')).toBe(false);
   });
 });
 
@@ -631,6 +632,103 @@ describe('KVへのステータス保存', () => {
     expect(JSON.parse(statusPuts()[0][1]).Server1.status).toBe(
       'ERROR: Status 500'
     );
+  });
+
+  it('Discordへの通知が一時的な障害（5xx）で失敗したら、記録もシートも前回のままにする', async () => {
+    mockFetch([['Server1', 'https://a.com', 'OK: Status 200', OLD_UPDATE]], {
+      'https://a.com': 500,
+      [env.DISCORD_WEBHOOK_URL]: 503,
+    });
+    mockPrevStatuses({
+      Server1: {
+        status: 'OK: Status 200',
+        lastUpdate: OLD_UPDATE,
+        failCount: 1,
+      },
+    });
+
+    const res = await handler.fetch(childRequest(), env);
+
+    expect(res.status).toBe(200);
+    expect(fetchedUrls().filter((u) => u.includes('discord.com'))).toHaveLength(
+      1
+    );
+    // 失敗回数1の記録が残るので、次の監視でもう一度障害を確定して通知する
+    expect(statusPuts()).toHaveLength(0);
+    expect(fetchedUrls().some((u) => u.includes(':batchUpdate'))).toBe(false);
+  });
+
+  it('Webhook URLの誤りなど（4xx）で失敗したら、記録とシートの表示だけ進める', async () => {
+    mockFetch([['Server1', 'https://a.com', 'OK: Status 200', OLD_UPDATE]], {
+      'https://a.com': 500,
+      [env.DISCORD_WEBHOOK_URL]: 404,
+    });
+    mockPrevStatuses({
+      Server1: {
+        status: 'OK: Status 200',
+        lastUpdate: OLD_UPDATE,
+        failCount: 1,
+      },
+    });
+
+    const res = await handler.fetch(childRequest(), env);
+
+    expect(res.status).toBe(200);
+    expect(JSON.parse(statusPuts()[0][1]).Server1.status).toBe(
+      'ERROR: Status 500'
+    );
+    expect(sheetWriteBodies().values[0].data[0].values[0][0]).toBe(
+      'ERROR: Status 500'
+    );
+  });
+
+  it('通知の一部だけ失敗しても、ほかの行は通知どおりに記録する', async () => {
+    mockFetch(
+      [
+        ['Server1', 'https://a.com', 'OK: Status 200', OLD_UPDATE],
+        ['Server2', 'https://b.com', 'OK: Status 200', OLD_UPDATE],
+      ],
+      { 'https://a.com': 500, 'https://b.com': 502 }
+    );
+    // Server1 への通知だけ Discord 側の障害で失敗させる
+    const base = global.fetch as jest.Mock;
+    global.fetch = jest.fn((url: unknown, init?: RequestInit) => {
+      if (String(url).includes('discord.com')) {
+        const body = JSON.parse(String(init?.body));
+        const failed = body.embeds[0].fields[0].value === 'Server1';
+        return Promise.resolve(
+          new Response(null, { status: failed ? 503 : 204 })
+        );
+      }
+      return base(url, init);
+    });
+    mockPrevStatuses({
+      Server1: {
+        status: 'OK: Status 200',
+        lastUpdate: OLD_UPDATE,
+        failCount: 1,
+      },
+      Server2: {
+        status: 'OK: Status 200',
+        lastUpdate: OLD_UPDATE,
+        failCount: 1,
+      },
+    });
+
+    const res = await handler.fetch(childRequest(), env);
+
+    expect(res.status).toBe(200);
+    const saved = JSON.parse(statusPuts()[0][1]);
+    expect(saved.Server1).toEqual({
+      status: 'OK: Status 200',
+      lastUpdate: OLD_UPDATE,
+      failCount: 1,
+    });
+    expect(saved.Server2.status).toBe('ERROR: Status 502');
+    // シートは通知できた Server2 の行（3行目）だけ書き換える
+    expect(
+      sheetWriteBodies().values[0].data.map((d: { range: string }) => d.range)
+    ).toEqual(['Sheet1!C3:D3']);
   });
 });
 
