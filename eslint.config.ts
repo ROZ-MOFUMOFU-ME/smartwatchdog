@@ -1,8 +1,8 @@
 import js from '@eslint/js';
 import tseslint from 'typescript-eslint';
 import prettier from 'eslint-config-prettier';
+import { importX } from 'eslint-plugin-import-x';
 import pluginPrettier from 'eslint-plugin-prettier';
-import pluginImport from 'eslint-plugin-import';
 
 export default [
   {
@@ -15,7 +15,7 @@ export default [
     plugins: {
       '@typescript-eslint': tseslint.plugin,
       prettier: pluginPrettier,
-      import: pluginImport,
+      'import-x': importX,
     },
     files: ['**/*.ts', '**/*.tsx'],
     languageOptions: {
@@ -25,7 +25,7 @@ export default [
     },
     rules: {
       'prettier/prettier': 'error',
-      'import/order': ['error', { alphabetize: { order: 'asc' } }],
+      'import-x/order': ['error', { alphabetize: { order: 'asc' } }],
       '@typescript-eslint/no-explicit-any': 'warn',
       '@typescript-eslint/no-unused-vars': [
         'error',
