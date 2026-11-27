@@ -322,6 +322,27 @@ function hasRequiredEnv(env: Env): boolean {
   );
 }
 
+// 2つの文字列を、内容によらず同じ時間で比較する（比較時間からトークンを推測されないように）
+function timingSafeEqual(a: string, b: string): boolean {
+  const ea = new TextEncoder().encode(a);
+  const eb = new TextEncoder().encode(b);
+  if (ea.length !== eb.length) return false;
+  let diff = 0;
+  for (let i = 0; i < ea.length; i++) diff |= ea[i] ^ eb[i];
+  return diff === 0;
+}
+
+// HTTPアクセスの認可。TRIGGER_TOKEN を設定していれば Authorization: Bearer <token> を必須にする。
+// 公開URLやプレビューURLへの無関係なアクセスで、監視・Google API・Discord通知が走るのを防ぐ。
+function isAuthorized(request: Request, env: Env): boolean {
+  const expected = env.TRIGGER_TOKEN?.trim();
+  if (!expected) return true;
+  const match = (request.headers.get('Authorization') || '').match(
+    /^Bearer\s+(\S+)$/i
+  );
+  return !!match && timingSafeEqual(match[1], expected);
+}
+
 // SELFバインディング経由でシート単位に子invocationへファンアウトする。
 // 各子は新たな50 subrequest枠を持つため、合計の監視可能数を増やせる。
 // ファンアウトはシート単位（任意チャンク単位ではない）にして、KVキーごとの
@@ -337,13 +358,19 @@ async function fanOutPerSheet(env: Env): Promise<number> {
     env.STATUS_KV
   );
   const fanoutLimit = parseInt(env.FANOUT_LIMIT || '40', 10);
+  // TRIGGER_TOKEN 設定時は、子invocationも同じ認可を通るようにトークンを付ける
+  const token = env.TRIGGER_TOKEN?.trim();
+  const childInit: RequestInit = token
+    ? { headers: { Authorization: `Bearer ${token}` } }
+    : {};
   for (const sheet of sheets) {
     // 1つの子が失敗しても残りを止めないようtry/catch。
     // 子レスポンスのbodyを読み切らないと、親invocation終了時に子が打ち切られて
     // tail上 "Canceled" になる。結果は使わないが必ず読み切って完了を待つ。
     try {
       const childResp = await self.fetch(
-        `https://smartwatchdog.internal/?sheetId=${sheet.sheetId}&title=${encodeURIComponent(sheet.title)}&limit=${fanoutLimit}`
+        `https://smartwatchdog.internal/?sheetId=${sheet.sheetId}&title=${encodeURIComponent(sheet.title)}&limit=${fanoutLimit}`,
+        childInit
       );
       await childResp.text();
     } catch (err) {
@@ -355,6 +382,16 @@ async function fanOutPerSheet(env: Env): Promise<number> {
 
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
+    // トークンが無い・違うアクセスは、監視処理を一切実行せずに拒否する
+    if (!isAuthorized(request, env)) {
+      return new Response(JSON.stringify({ error: 'Unauthorized' }), {
+        status: 401,
+        headers: {
+          'Content-Type': 'application/json',
+          'WWW-Authenticate': 'Bearer',
+        },
+      });
+    }
     try {
       // クエリパラメータでoffset/limit/sheetId/titleを指定可能に
       const url = new URL(request.url);

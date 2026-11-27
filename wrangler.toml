@@ -2,6 +2,11 @@ name = "smartwatchdog"
 main = "dist/index.js"
 compatibility_date = "2025-06-30"
 compatibility_flags = ["nodejs_compat"]
+# 手動実行用の公開URL（<name>.<subdomain>.workers.dev）。シークレット TRIGGER_TOKEN で保護する
+workers_dev = true
+# バージョンごとのプレビューURLは使わない。古いバージョンにはトークン検証が無いうえ、
+# 本番と同じKV・Discordを使って誰でも監視を起動できてしまうため
+preview_urls = false
 
 [vars]
 GOOGLE_CLIENT_EMAIL = "notify@cf-sheetswatchdog.iam.gserviceaccount.com"
