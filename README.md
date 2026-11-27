@@ -81,6 +81,11 @@ SmartWatchdogは、Googleスプレッドシートを管理画面として使用�
 - 状態が変化したときだけ通知・シート更新・KV保存を実行
 - 複数シートの状態を独立して管理
 
+### 5. 手動実行
+
+- Worker URLにアクセスすると、すぐに監視を実行
+- シークレット `TRIGGER_TOKEN` を設定すると、トークンの無いアクセスを拒否
+
 ## 🏗️ アーキテクチャ
 
 ```mermaid
@@ -168,8 +173,14 @@ npx wrangler kv namespace create STATUS_KV
 npx wrangler secret put GOOGLE_PRIVATE_KEY
 npx wrangler secret put DISCORD_WEBHOOK_URL
 
+# 手動実行を保護するトークン（推奨）。ランダムな値を生成して設定する
+openssl rand -hex 32
+npx wrangler secret put TRIGGER_TOKEN
+
 # 通常の環境変数はwrangler.tomlに記載
 ```
+
+`TRIGGER_TOKEN` を設定すると、Worker URL へのアクセスに `Authorization: Bearer <トークン>` ヘッダーが必要になります。設定しない場合は、URLを知っている誰でも監視を実行できます。
 
 #### 4.3 wrangler.toml設定例
 
@@ -178,6 +189,10 @@ name = "smartwatchdog"
 main = "dist/index.js"
 compatibility_date = "2025-06-30"
 compatibility_flags = ["nodejs_compat"]
+# 手動実行用の公開URL（TRIGGER_TOKEN で保護）
+workers_dev = true
+# バージョンごとのプレビューURLは無効にする（本番と同じKV・Discordを使うため）
+preview_urls = false
 
 [vars]
 GOOGLE_CLIENT_EMAIL = "example-service@example-project.iam.gserviceaccount.com"
@@ -217,8 +232,8 @@ command = "npm run build"
 # Cloudflare Workersにデプロイ（TypeScriptのビルドはwranglerが自動で実行）
 npm run deploy
 
-# 動作確認（全シートをすぐに監視）
-curl https://your-worker.your-subdomain.workers.dev
+# 動作確認（全シートをすぐに監視。TRIGGER_TOKEN を設定した場合はヘッダーが必要）
+curl -H "Authorization: Bearer $TRIGGER_TOKEN" https://your-worker.your-subdomain.workers.dev
 
 # KVストレージの確認（本番のデータを見るには --remote が必要）
 npx wrangler kv key list --binding STATUS_KV --remote
@@ -242,7 +257,7 @@ npx wrangler tail
 - **手動実行**: Worker URLにアクセスで即座実行
 - **監視URL**: `https://your-worker.your-subdomain.workers.dev`
 
-> Worker URLには認証がありません。アクセスされるたびに監視が実行されるため、URLの共有には注意してください。Workers Builds のプレビュー版のURLも同じで、本番と同じKVとDiscordを使います。
+> Worker URL はインターネットに公開されています。`TRIGGER_TOKEN` を設定して、トークンの無いアクセスを拒否してください。バージョンごとのプレビューURLは、本番と同じKVとDiscordを使うため `preview_urls = false` で無効にしています。
 
 ## 📖 使用方法
 
@@ -260,14 +275,14 @@ npx wrangler tail
 
 ```bash
 # 全シートを監視（シートごとに子へ振り分けるので、結果ではなく件数が返る）
-$ curl https://your-worker.your-subdomain.workers.dev
+$ curl -H "Authorization: Bearer $TRIGGER_TOKEN" https://your-worker.your-subdomain.workers.dev
 {
   "message": "Server health check fanned out",
   "dispatched": 3
 }
 
 # 特定のシートだけを監視して、状態が変化した行を確認
-$ curl -G https://your-worker.your-subdomain.workers.dev \
+$ curl -G -H "Authorization: Bearer $TRIGGER_TOKEN" https://your-worker.your-subdomain.workers.dev \
     --data-urlencode "sheetId=0" --data-urlencode "title=シート1"
 {
   "message": "Server health check complete",
@@ -315,12 +330,14 @@ $ curl -G https://your-worker.your-subdomain.workers.dev \
 
 ```bash
 # 全シートをすぐに監視
-curl https://your-worker.your-subdomain.workers.dev
+curl -H "Authorization: Bearer $TRIGGER_TOKEN" https://your-worker.your-subdomain.workers.dev
 
 # 特定のシートだけを監視（sheetId はシートURLの gid= の値）
-curl -G https://your-worker.your-subdomain.workers.dev \
+curl -G -H "Authorization: Bearer $TRIGGER_TOKEN" https://your-worker.your-subdomain.workers.dev \
   --data-urlencode "sheetId=0" --data-urlencode "title=シート1"
 ```
+
+`TRIGGER_TOKEN` を設定していない場合、`-H "Authorization: ..."` は不要です。
 
 | パラメータ       | 説明                                                                                                                       |
 | ---------------- | -------------------------------------------------------------------------------------------------------------------------- |
@@ -480,7 +497,7 @@ GitHub ActionsでLint/Format/Test/ビルドを自動実行します。本番へ�
 ### デプロイ
 
 - **自動**: main にマージすると、Cloudflare Workers Builds がビルドして本番にデプロイします
-- **プレビュー**: main 以外のブランチに push すると、本番には反映されないプレビュー版が作られ、PRのチェック（Workers Builds）にプレビューURLが表示されます
+- **プレビュー**: main 以外のブランチに push すると、Workers Builds がビルドを確認し、本番には反映されないバージョンを作ります（プレビューURLは `preview_urls = false` で無効にしています）
 - **手動**: 次のコマンドでもデプロイできます
 
 ```bash
@@ -555,6 +572,13 @@ crons = ["*/10 * * * *"]  # 10分間隔
 - SmartWatchdogがKVに書き込むのは、状態が変化したときと、Googleのアクセストークンを更新したとき（多くても1日50回程度）だけです
 - 同じアカウントの他のWorkerの利用分も含まれます。CloudflareダッシュボードでKVの名前空間ごとの操作数を確認してください
 
+#### 7. `401 Unauthorized` が返る
+
+**原因と対策**:
+
+- `TRIGGER_TOKEN` を設定している場合、`Authorization: Bearer <トークン>` ヘッダーが無い、または値が違うと 401 になります
+- トークンが分からなくなった場合は、`npx wrangler secret put TRIGGER_TOKEN` で新しい値を設定し直してください
+
 ### デバッグコマンド
 
 ```bash
@@ -571,7 +595,7 @@ npx wrangler kv key get "KEY_NAME" --binding STATUS_KV --remote
 npx wrangler secret list
 
 # Worker手動実行（デバッグ情報付き）
-curl -v https://your-worker.your-subdomain.workers.dev
+curl -v -H "Authorization: Bearer $TRIGGER_TOKEN" https://your-worker.your-subdomain.workers.dev
 ```
 
 ## 🤝 貢献

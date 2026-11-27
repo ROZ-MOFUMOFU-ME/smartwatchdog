@@ -436,3 +436,96 @@ describe('KVへのステータス保存', () => {
     expect(saved.Server3.status).toBe('ERROR: Status 500');
   });
 });
+
+// 手動実行の保護: TRIGGER_TOKEN を設定すると、トークンの無いHTTPアクセスを拒否する
+describe('TRIGGER_TOKEN による認可', () => {
+  const TOKEN = 'test-trigger-token';
+  const envWithToken: Env = { ...env, TRIGGER_TOKEN: TOKEN };
+  const authHeader = { Authorization: `Bearer ${TOKEN}` };
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    mockGet.mockResolvedValue(undefined);
+    (global.fetch as jest.Mock) = jest.fn((url: unknown) => {
+      const u = String(url);
+      if (u.includes('values:batchGet')) {
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({ valueRanges: [{ values: [] }] }),
+        } as Response);
+      }
+      if (u.includes('oauth2.googleapis.com')) {
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({ access_token: 'dummy-token' }),
+        } as Response);
+      }
+      // シート一覧（メタデータ）
+      return Promise.resolve({
+        ok: true,
+        json: () =>
+          Promise.resolve({
+            sheets: [{ properties: { sheetId: 1, title: 'Sheet1' } }],
+          }),
+      } as Response);
+    });
+  });
+
+  it('トークンが無いアクセスは401を返し、監視処理を実行しない', async () => {
+    const res = await handler.fetch(
+      new Request('https://example.com'),
+      envWithToken
+    );
+
+    expect(res.status).toBe(401);
+    expect(res.headers.get('WWW-Authenticate')).toBe('Bearer');
+    expect(global.fetch).not.toHaveBeenCalled();
+    expect(mockGet).not.toHaveBeenCalled();
+  });
+
+  it('トークンが違うアクセスは401を返す', async () => {
+    const req = new Request('https://example.com?sheetId=1&title=Sheet1', {
+      headers: { Authorization: 'Bearer wrong-token' },
+    });
+
+    const res = await handler.fetch(req, envWithToken);
+
+    expect(res.status).toBe(401);
+    expect(global.fetch).not.toHaveBeenCalled();
+  });
+
+  it('正しいトークンなら実行できる', async () => {
+    const req = new Request('https://example.com?sheetId=1&title=Sheet1', {
+      headers: authHeader,
+    });
+
+    const res = await handler.fetch(req, envWithToken);
+
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { message: string };
+    expect(body.message).toMatch(/Server health check complete/);
+  });
+
+  it('ファンアウトの子invocationにも同じトークンを付けて呼ぶ', async () => {
+    const selfFetch = jest.fn(
+      async (_input: string | URL, _init?: RequestInit) =>
+        new Response('{}', { status: 200 })
+    );
+    const envWithSelf: Env = {
+      ...envWithToken,
+      SELF: { fetch: selfFetch } as unknown as Fetcher,
+    };
+
+    const res = await handler.fetch(
+      new Request('https://example.com', { headers: authHeader }),
+      envWithSelf
+    );
+
+    expect(res.status).toBe(200);
+    expect(selfFetch).toHaveBeenCalledTimes(1);
+    const init = selfFetch.mock.calls[0][1];
+    expect(new Headers(init?.headers).get('Authorization')).toBe(
+      `Bearer ${TOKEN}`
+    );
+  });
+});

@@ -23,4 +23,7 @@ export interface Env {
   // 子invocation1回あたりの監視上限（既定40。subrequest上限50に対し
   // batchGet/書き込み/Discord通知のオーバーヘッド分の余裕を残す。子モードはmetadataを省略）
   FANOUT_LIMIT?: string;
+  // HTTPアクセス（手動実行）に必要なトークン。設定すると Authorization: Bearer <token> が必須になる。
+  // 未設定なら従来どおり誰でも実行できる。シートごとの子invocationにも同じトークンを付けて呼ぶ
+  TRIGGER_TOKEN?: string;
 }
